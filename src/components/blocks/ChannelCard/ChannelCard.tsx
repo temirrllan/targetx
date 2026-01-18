@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import type { ChannelSummary } from "../../../types/dashboard";
 import Tag from "../../ui/Tag/Tag";
 
@@ -8,7 +9,9 @@ type ChannelCardProps = {
 
 const ChannelCard = ({ channel, animationDelay = 0 }: ChannelCardProps) => {
   return (
-    <div
+    <Link
+      to={`/channel/${channel.id}`}
+      aria-label={`Открыть канал ${channel.title}`}
       className="group animate-fade-up rounded-2xl border border-slate-800/70 bg-slate-900/50 p-4 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.7)] transition duration-300 hover:border-slate-700/70 hover:bg-slate-900/70 sm:p-5"
       style={{ animationDelay: `${animationDelay}ms` }}
     >
@@ -32,7 +35,7 @@ const ChannelCard = ({ channel, animationDelay = 0 }: ChannelCardProps) => {
           <Tag variant="info">Active</Tag>
         </div>
       </div>
-    </div>
+    </Link>
   );
 };
 
