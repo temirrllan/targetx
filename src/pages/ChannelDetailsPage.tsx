@@ -162,6 +162,23 @@ const ChannelDetailsPage = () => {
             </p>
           </div>
         </div>
+
+
+
+        <Link
+    to={`/channel/${channelId}/create-post`}
+    className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-xs uppercase tracking-[0.2em] text-blue-100 transition hover:border-blue-500/50 hover:bg-blue-500/20"
+  >
+    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
+      <path
+        d="M10 4v12m-6-6h12"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+    Создать
+  </Link>
       </header>
 
       <section className="space-y-3">
