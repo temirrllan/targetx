@@ -25,8 +25,12 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
 
+    // Add Telegram WebApp init data if available
     if (window.Telegram?.WebApp?.initData) {
       headers['X-Telegram-Init-Data'] = window.Telegram.WebApp.initData;
+      console.log('Telegram init data added to headers');
+    } else {
+      console.warn('No Telegram init data available');
     }
 
     return headers;
@@ -48,6 +52,8 @@ class ApiClient {
     const { params, ...fetchConfig } = config;
     const url = this.buildUrl(endpoint, params);
 
+    console.log(`API Request: ${config.method || 'GET'} ${url}`);
+
     try {
       const response = await fetch(url, {
         ...fetchConfig,
@@ -57,12 +63,27 @@ class ApiClient {
         },
       });
 
+      console.log(`API Response: ${response.status} ${response.statusText}`);
+
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ message: 'Request failed' }));
-        throw new Error(error.message || `HTTP ${response.status}`);
+        const errorText = await response.text();
+        console.error('API Error Response:', errorText);
+        
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.message || errorMessage;
+        } catch {
+          // If not JSON, use status text
+          errorMessage = response.statusText || errorMessage;
+        }
+        
+        throw new Error(errorMessage);
       }
 
-      return await response.json();
+      const data = await response.json();
+      console.log('API Response Data:', data);
+      return data;
     } catch (error) {
       console.error('API request failed:', error);
       throw error;
@@ -103,6 +124,8 @@ class ApiClient {
       headers['X-Telegram-Init-Data'] = window.Telegram.WebApp.initData;
     }
 
+    console.log(`API Request (FormData): POST ${url}`);
+
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -110,12 +133,26 @@ class ApiClient {
         body: formData,
       });
 
+      console.log(`API Response: ${response.status} ${response.statusText}`);
+
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ message: 'Request failed' }));
-        throw new Error(error.message || `HTTP ${response.status}`);
+        const errorText = await response.text();
+        console.error('API Error Response:', errorText);
+        
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.message || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        
+        throw new Error(errorMessage);
       }
 
-      return await response.json();
+      const data = await response.json();
+      console.log('API Response Data:', data);
+      return data;
     } catch (error) {
       console.error('API request failed:', error);
       throw error;

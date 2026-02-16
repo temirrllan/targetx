@@ -62,9 +62,10 @@ const ChannelCard = ({ channel, animationDelay = 0 }: ChannelCardProps) => {
 };
 
 const HomePage = () => {
-  const { user, loading: userLoading } = useAuth();
+  const { user, loading: userLoading, error: userError } = useAuth();
   const [channels, setChannels] = useState<Channel[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(true);
+  const [channelsError, setChannelsError] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   useBackButton(() => {
@@ -77,10 +78,14 @@ const HomePage = () => {
     const fetchChannels = async () => {
       try {
         setChannelsLoading(true);
+        setChannelsError(null);
         const data = await channelsApi.getChannels();
-        setChannels(data);
+        console.log('Channels data:', data);
+        setChannels(Array.isArray(data) ? data : []);
       } catch (error) {
         console.error('Failed to fetch channels:', error);
+        setChannelsError(error instanceof Error ? error.message : 'Ошибка загрузки каналов');
+        setChannels([]);
       } finally {
         setChannelsLoading(false);
       }
@@ -89,18 +94,40 @@ const HomePage = () => {
     fetchChannels();
   }, []);
 
+  // Log user data for debugging
+  useEffect(() => {
+    console.log('User data:', user);
+    console.log('User loading:', userLoading);
+    console.log('User error:', userError);
+  }, [user, userLoading, userError]);
+
   const displayName = user
-    ? [user.firstName, user.lastName].filter(Boolean).join(" ") || "Telegram user"
-    : "Загрузка...";
+    ? [user.firstName, user.lastName].filter(Boolean).join(" ") || user.username || "Telegram user"
+    : "Telegram user";
   
   const initials = user ? getInitials(user.firstName, user.lastName, user.username) : "?";
 
-  if (userLoading || channelsLoading) {
+  if (userLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
           <div className="h-12 w-12 mx-auto animate-spin rounded-full border-4 border-slate-800 border-t-blue-500" />
-          <p className="mt-4 text-sm text-slate-400">Загрузка...</p>
+          <p className="mt-4 text-sm text-slate-400">Загрузка профиля...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (userError) {
+    return (
+      <div className="space-y-8 sm:space-y-10">
+        <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-6 text-center">
+          <p className="text-sm text-red-300 mb-4">
+            Ошибка загрузки профиля: {userError.message}
+          </p>
+          <p className="text-xs text-slate-400">
+            Проверьте подключение к интернету или попробуйте перезапустить приложение
+          </p>
         </div>
       </div>
     );
@@ -202,14 +229,31 @@ const HomePage = () => {
           </div>
         </div>
 
-        {channels.length === 0 ? (
+        {channelsLoading ? (
           <div className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-10 text-center">
-            <p className="text-sm text-slate-400">
+            <div className="h-8 w-8 mx-auto animate-spin rounded-full border-4 border-slate-800 border-t-blue-500" />
+            <p className="mt-4 text-sm text-slate-400">Загрузка каналов...</p>
+          </div>
+        ) : channelsError ? (
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-6 text-center">
+            <p className="text-sm text-amber-200 mb-2">
+              {channelsError}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-3 text-xs text-amber-300 hover:text-amber-100 underline"
+            >
+              Попробовать снова
+            </button>
+          </div>
+        ) : channels.length === 0 ? (
+          <div className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-10 text-center">
+            <p className="text-sm text-slate-400 mb-4">
               У вас пока нет добавленных каналов
             </p>
             <Link
               to="/add-channel"
-              className="mt-4 inline-flex items-center justify-center rounded-full border border-blue-500/30 bg-blue-500/10 px-5 py-2 text-xs uppercase tracking-[0.2em] text-blue-100 transition hover:border-blue-500/50 hover:bg-blue-500/20"
+              className="inline-flex items-center justify-center rounded-full border border-blue-500/30 bg-blue-500/10 px-5 py-2 text-xs uppercase tracking-[0.2em] text-blue-100 transition hover:border-blue-500/50 hover:bg-blue-500/20"
             >
               Добавить канал
             </Link>
