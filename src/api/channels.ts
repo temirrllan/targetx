@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { Channel, ChannelStats } from '../types/api';
+import type { Channel } from '../types/api';
 
 export const channelsApi = {
   getChannels: () => apiClient.get<Channel[]>('/api/tgapp/channels'),
