@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import type { ChannelSummary, UserProfile } from "../types/dashboard";
 import StatusText from "../components/ui/StatusText/StatusText";
 import Tag from "../components/ui/Tag/Tag";
-import { channels, user } from "../data/mockDashboard";
+import { useUser } from "../contexts/UserContext";
+import { useChannels } from "../contexts/ChannelsContext";
+import type { ChannelSummary } from "../types/api";
 
-const getInitials = (data: UserProfile) => {
-  const initials = [data.firstName, data.lastName]
+const getInitials = (firstName?: string, lastName?: string, username?: string) => {
+  const initials = [firstName, lastName]
     .filter(Boolean)
     .map((value) => value?.[0]?.toUpperCase())
     .join("");
@@ -15,8 +16,8 @@ const getInitials = (data: UserProfile) => {
     return initials;
   }
 
-  if (data.username) {
-    return data.username[0]?.toUpperCase() ?? "?";
+  if (username) {
+    return username[0]?.toUpperCase() ?? "?";
   }
 
   return "?";
@@ -37,22 +38,31 @@ const ChannelCard = ({ channel, animationDelay = 0 }: ChannelCardProps) => {
     >
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
-          <div
-            className={`h-10 w-10 rounded-xl bg-gradient-to-br ${channel.accent} shadow-lg shadow-slate-900/60 sm:h-12 sm:w-12`}
-          />
+          {channel.photoUrl ? (
+            <img
+              src={channel.photoUrl}
+              alt={channel.title}
+              className="h-10 w-10 rounded-xl object-cover sm:h-12 sm:w-12"
+            />
+          ) : (
+            <div
+              className={`h-10 w-10 rounded-xl bg-gradient-to-br ${channel.accent} shadow-lg shadow-slate-900/60 sm:h-12 sm:w-12`}
+            />
+          )}
           <div>
             <h4 className="text-base font-semibold text-slate-100 sm:text-lg">
               {channel.title}
             </h4>
             <p className="text-xs text-slate-400 sm:text-sm">
-              {channel.subscribers.toLocaleString("en-US")} subscribers
+              {channel.subscribers.toLocaleString("ru-RU")} подписчиков
+              {channel.username && ` • @${channel.username}`}
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap gap-3">
-          <Tag>Scheduled: {channel.scheduledPosts}</Tag>
-          <Tag variant="info">Active</Tag>
+          <Tag>Запланировано: {channel.scheduledPosts}</Tag>
+          <Tag variant="info">Активен</Tag>
         </div>
       </div>
     </Link>
@@ -60,20 +70,60 @@ const ChannelCard = ({ channel, animationDelay = 0 }: ChannelCardProps) => {
 };
 
 const HomePage = () => {
-  const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ");
-  const displayName = fullName || "Telegram user";
-  const initials = getInitials(user);
+  const { user, isLoading: userLoading, error: userError } = useUser();
+  const {
+    channels,
+    isLoading: channelsLoading,
+    error: channelsError,
+  } = useChannels();
+
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const handleToggleMenu = () => {
     setIsMenuOpen((prev) => !prev);
   };
 
+  // Загрузка
+  if (userLoading) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <div className="text-center">
+          <div className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-slate-700 border-t-blue-500"></div>
+          <p className="mt-4 text-sm text-slate-400">Загрузка профиля...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Ошибка загрузки пользователя
+  if (userError || !user) {
+    return (
+      <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-6 text-center">
+        <h2 className="text-xl font-semibold text-red-300">
+          Ошибка загрузки профиля
+        </h2>
+        <p className="mt-2 text-sm text-red-200">
+          {userError?.message || "Не удалось загрузить данные пользователя"}
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-4 rounded-full border border-red-400/70 bg-red-500/20 px-5 py-2 text-xs uppercase tracking-[0.2em] text-red-200 transition hover:bg-red-500/30"
+        >
+          Обновить страницу
+        </button>
+      </div>
+    );
+  }
+
+  const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ");
+  const displayName = fullName || "Пользователь Telegram";
+  const initials = getInitials(user.firstName, user.lastName, user.username);
+
   return (
     <div className="space-y-8 sm:space-y-10">
       {/* Profile Section */}
       <section className="relative z-30 animate-fade-up rounded-2xl border border-slate-800/80 bg-slate-900/60 p-4 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.9)] backdrop-blur sm:p-6">
-        <div className="flex justify-between items-center sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-center justify-between sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-center gap-4">
             <div className="relative">
               {user.photoUrl ? (
@@ -94,7 +144,7 @@ const HomePage = () => {
 
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                Profile
+                Профиль
               </p>
               <h2 className="text-xl font-semibold text-slate-50 sm:text-2xl">
                 {displayName}
@@ -108,15 +158,15 @@ const HomePage = () => {
             </div>
           </div>
 
-          <div className="relative sm:top-2 z-20 -top-2 self-end sm:self-start">
+          <div className="relative z-20 -top-2 self-end sm:top-2 sm:self-start">
             <button
               type="button"
-              className="group inline-flex h-10 w-10 items-center justify-center rounded-full "
+              className="group inline-flex h-10 w-10 items-center justify-center rounded-full"
               onClick={handleToggleMenu}
               aria-expanded={isMenuOpen}
               aria-controls="profile-menu"
             >
-              <span className="sr-only">Open profile menu</span>
+              <span className="sr-only">Открыть меню профиля</span>
               <span className="grid gap-1.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-slate-400 transition group-hover:bg-slate-200" />
                 <span className="h-1.5 w-1.5 rounded-full bg-slate-400 transition group-hover:bg-slate-200" />
@@ -156,26 +206,59 @@ const HomePage = () => {
         className="animate-fade-up space-y-5 sm:space-y-6"
         style={{ animationDelay: "120ms" }}
       >
-        <div className="flex flex-wrap -z-10 items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-              Your channels
+              Ваши каналы
             </p>
           </div>
           <div className="rounded-full border border-slate-800/80 bg-slate-900/60 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-slate-300 sm:text-xs">
-            {channels.length} channels
+            {channels.length} каналов
           </div>
         </div>
 
-        <div className="grid gap-4">
-          {channels.map((channel, index) => (
-            <ChannelCard
-              key={channel.id}
-              channel={channel}
-              animationDelay={180 + index * 120}
-            />
-          ))}
-        </div>
+        {channelsLoading && (
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-blue-500"></div>
+              <p className="mt-4 text-sm text-slate-400">Загрузка каналов...</p>
+            </div>
+          </div>
+        )}
+
+        {channelsError && (
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-5 text-center">
+            <p className="text-sm text-amber-100">
+              Ошибка загрузки каналов: {channelsError.message}
+            </p>
+          </div>
+        )}
+
+        {!channelsLoading && !channelsError && channels.length === 0 && (
+          <div className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-8 text-center">
+            <p className="text-sm text-slate-400">
+              У вас пока нет подключенных каналов
+            </p>
+            <Link
+              to="/add-channel"
+              className="mt-4 inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-5 py-2 text-xs uppercase tracking-[0.2em] text-blue-100 transition hover:border-blue-500/50 hover:bg-blue-500/20"
+            >
+              Добавить первый канал
+            </Link>
+          </div>
+        )}
+
+        {!channelsLoading && !channelsError && channels.length > 0 && (
+          <div className="grid gap-4">
+            {channels.map((channel, index) => (
+              <ChannelCard
+                key={channel.id}
+                channel={channel}
+                animationDelay={180 + index * 120}
+              />
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

@@ -93,7 +93,7 @@ const CreatePostPage = () => {
       const aiResponse: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: generateAiResponse(inputMessage),
+        content: generateAiResponse(),
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, aiResponse]);
@@ -101,7 +101,7 @@ const CreatePostPage = () => {
     }, 1500);
   };
 
-  const generateAiResponse = (input: string) => {
+  const generateAiResponse = () => {
     const responses = [
       "Отличная идея! Попробуй добавить эмодзи для большей вовлеченности 🚀",
       "Предлагаю начать с интригующего вопроса, чтобы зацепить аудиторию",
