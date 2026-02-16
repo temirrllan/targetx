@@ -79,11 +79,14 @@ const HomePage = () => {
       try {
         setChannelsLoading(true);
         setChannelsError(null);
+        
+        console.log('🔍 Fetching channels...');
         const data = await channelsApi.getChannels();
-        console.log('Channels data:', data);
+        console.log('✅ Channels data:', data);
+        
         setChannels(Array.isArray(data) ? data : []);
       } catch (error) {
-        console.error('Failed to fetch channels:', error);
+        console.error('❌ Failed to fetch channels:', error);
         setChannelsError(error instanceof Error ? error.message : 'Ошибка загрузки каналов');
         setChannels([]);
       } finally {
@@ -93,13 +96,6 @@ const HomePage = () => {
 
     fetchChannels();
   }, []);
-
-  // Log user data for debugging
-  useEffect(() => {
-    console.log('User data:', user);
-    console.log('User loading:', userLoading);
-    console.log('User error:', userError);
-  }, [user, userLoading, userError]);
 
   const displayName = user
     ? [user.firstName, user.lastName].filter(Boolean).join(" ") || user.username || "Telegram user"
@@ -118,17 +114,57 @@ const HomePage = () => {
     );
   }
 
-  if (userError) {
+  if (userError && !user) {
     return (
       <div className="space-y-8 sm:space-y-10">
         <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-6 text-center">
+          <div className="mb-4">
+            <svg viewBox="0 0 20 20" fill="none" className="h-12 w-12 mx-auto text-red-400">
+              <path
+                d="M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16zm0 12a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm1-4V6a1 1 0 1 0-2 0v4a1 1 0 1 0 2 0z"
+                fill="currentColor"
+              />
+            </svg>
+          </div>
+          <h2 className="text-lg font-semibold text-red-300 mb-2">
+            Ошибка загрузки
+          </h2>
           <p className="text-sm text-red-300 mb-4">
-            Ошибка загрузки профиля: {userError.message}
+            {userError.message}
           </p>
-          <p className="text-xs text-slate-400">
-            Проверьте подключение к интернету или попробуйте перезапустить приложение
-          </p>
+          <div className="space-y-2 text-xs text-slate-400">
+            <p>Убедитесь, что:</p>
+            <ul className="list-disc list-inside space-y-1">
+              <li>Приложение открыто через Telegram</li>
+              <li>Есть подключение к интернету</li>
+              <li>Сервер доступен</li>
+            </ul>
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-6 inline-flex items-center justify-center rounded-full border border-red-400/30 bg-red-500/10 px-5 py-2 text-xs uppercase tracking-[0.2em] text-red-200 transition hover:border-red-400/50 hover:bg-red-500/20"
+          >
+            Попробовать снова
+          </button>
         </div>
+
+        {/* Debug info */}
+        <details className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-4">
+          <summary className="cursor-pointer text-xs uppercase tracking-[0.2em] text-slate-500">
+            Информация для отладки
+          </summary>
+          <div className="mt-4 space-y-2 text-xs font-mono text-slate-400">
+            <p>🌐 API URL: {import.meta.env.VITE_API_URL || 'https://targetx-back.farmhub.pro'}</p>
+            <p>📱 Telegram WebApp: {window.Telegram?.WebApp ? '✅' : '❌'}</p>
+            <p>🔑 Init Data: {window.Telegram?.WebApp?.initData ? '✅' : '❌'}</p>
+            <p>👤 User Data: {window.Telegram?.WebApp?.initDataUnsafe?.user ? '✅' : '❌'}</p>
+            {window.Telegram?.WebApp?.initDataUnsafe?.user && (
+              <pre className="mt-2 p-2 bg-slate-950/60 rounded overflow-x-auto">
+                {JSON.stringify(window.Telegram.WebApp.initDataUnsafe.user, null, 2)}
+              </pre>
+            )}
+          </div>
+        </details>
       </div>
     );
   }

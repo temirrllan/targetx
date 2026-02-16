@@ -4,6 +4,9 @@ interface RequestConfig extends RequestInit {
   params?: Record<string, string | number | boolean>;
 }
 
+// Development mode detection
+const isDevelopment = import.meta.env.DEV;
+
 class ApiClient {
   private baseUrl: string;
   private token: string | null = null;
@@ -28,9 +31,12 @@ class ApiClient {
     // Add Telegram WebApp init data if available
     if (window.Telegram?.WebApp?.initData) {
       headers['X-Telegram-Init-Data'] = window.Telegram.WebApp.initData;
-      console.log('Telegram init data added to headers');
+      console.log('✅ Telegram init data added to headers');
+    } else if (isDevelopment) {
+      console.warn('⚠️ Development mode: No Telegram init data - using mock');
+      // In development, you might want to add a mock token or skip auth
     } else {
-      console.warn('No Telegram init data available');
+      console.error('❌ No Telegram init data available');
     }
 
     return headers;
@@ -52,7 +58,7 @@ class ApiClient {
     const { params, ...fetchConfig } = config;
     const url = this.buildUrl(endpoint, params);
 
-    console.log(`API Request: ${config.method || 'GET'} ${url}`);
+    console.log(`🌐 API Request: ${config.method || 'GET'} ${url}`);
 
     try {
       const response = await fetch(url, {
@@ -63,18 +69,17 @@ class ApiClient {
         },
       });
 
-      console.log(`API Response: ${response.status} ${response.statusText}`);
+      console.log(`📡 API Response: ${response.status} ${response.statusText}`);
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('API Error Response:', errorText);
+        console.error('❌ API Error Response:', errorText);
         
         let errorMessage = `HTTP ${response.status}`;
         try {
           const errorJson = JSON.parse(errorText);
-          errorMessage = errorJson.message || errorMessage;
+          errorMessage = errorJson.message || errorJson.error || errorMessage;
         } catch {
-          // If not JSON, use status text
           errorMessage = response.statusText || errorMessage;
         }
         
@@ -82,10 +87,10 @@ class ApiClient {
       }
 
       const data = await response.json();
-      console.log('API Response Data:', data);
+      console.log('✅ API Response Data:', data);
       return data;
     } catch (error) {
-      console.error('API request failed:', error);
+      console.error('💥 API request failed:', error);
       throw error;
     }
   }
@@ -124,7 +129,7 @@ class ApiClient {
       headers['X-Telegram-Init-Data'] = window.Telegram.WebApp.initData;
     }
 
-    console.log(`API Request (FormData): POST ${url}`);
+    console.log(`🌐 API Request (FormData): POST ${url}`);
 
     try {
       const response = await fetch(url, {
@@ -133,16 +138,16 @@ class ApiClient {
         body: formData,
       });
 
-      console.log(`API Response: ${response.status} ${response.statusText}`);
+      console.log(`📡 API Response: ${response.status} ${response.statusText}`);
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('API Error Response:', errorText);
+        console.error('❌ API Error Response:', errorText);
         
         let errorMessage = `HTTP ${response.status}`;
         try {
           const errorJson = JSON.parse(errorText);
-          errorMessage = errorJson.message || errorMessage;
+          errorMessage = errorJson.message || errorJson.error || errorMessage;
         } catch {
           errorMessage = response.statusText || errorMessage;
         }
@@ -151,10 +156,10 @@ class ApiClient {
       }
 
       const data = await response.json();
-      console.log('API Response Data:', data);
+      console.log('✅ API Response Data:', data);
       return data;
     } catch (error) {
-      console.error('API request failed:', error);
+      console.error('💥 API request failed:', error);
       throw error;
     }
   }
