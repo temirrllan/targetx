@@ -1,8 +1,7 @@
 import { apiClient } from './client';
 import type { Channel } from '../types/api';
 
-// Формат канала от бэкенда
-interface RawChannel {
+export interface RawChannel {
   _id: string;
   channelId?: string;
   name?: string;
@@ -18,17 +17,7 @@ interface RawChannel {
   updatedAt?: string;
 }
 
-interface ChannelsResponse {
-  channels?: RawChannel[];
-}
-
-interface ChannelResponse {
-  channel?: RawChannel;
-  scheduledPostsCount?: number;
-  posts?: unknown[];
-}
-
-const mapChannel = (raw: RawChannel): Channel => ({
+export const mapChannel = (raw: RawChannel): Channel => ({
   id: raw._id,
   title: raw.name || raw.title || 'Без названия',
   username: raw.username,
@@ -42,28 +31,27 @@ const mapChannel = (raw: RawChannel): Channel => ({
 
 export const channelsApi = {
   getChannels: async (): Promise<Channel[]> => {
-    const res = await apiClient.get<ChannelsResponse | RawChannel[]>('/api/tgapp/channels');
-    // Бэкенд может вернуть { channels: [...] } или просто [...]
-    const raw = Array.isArray(res) ? res : (res as ChannelsResponse).channels ?? [];
+    const res = await apiClient.get<{ channels?: RawChannel[] } | RawChannel[]>('/api/tgapp/channels');
+    const raw = Array.isArray(res) ? res : (res as { channels?: RawChannel[] }).channels ?? [];
     return raw.map(mapChannel);
   },
 
-  getChannelById: async (id: string): Promise<Channel> => {
-    const res = await apiClient.get<ChannelResponse | RawChannel>(`/api/tgapp/channels/${id}`);
-    const raw = (res as ChannelResponse).channel ?? (res as RawChannel);
-    return mapChannel(raw);
+  getChannelById: async (id: string): Promise<Channel & { scheduledPostsCount?: number; posts?: unknown[] }> => {
+    const res = await apiClient.get<{ channel?: RawChannel; scheduledPostsCount?: number; posts?: unknown[] } | RawChannel>(`/api/tgapp/channels/${id}`);
+    const raw = (res as { channel?: RawChannel }).channel ?? (res as RawChannel);
+    const extra = res as { scheduledPostsCount?: number; posts?: unknown[] };
+    return {
+      ...mapChannel(raw),
+      scheduledPostsCount: extra.scheduledPostsCount,
+      posts: extra.posts,
+    };
   },
 
-  loadChannel: (data: { channelId?: string; channelUsername?: string; accessToken?: string }) =>
-    apiClient.post<{ channel: RawChannel }>('/api/channel/load', data),
+  // Принимает channelUsername — @username или https://t.me/username
+  verifyChannel: (channelUsername: string) =>
+    apiClient.post<{ channel: RawChannel; postsCount?: number }>('/api/channel/verify', { channelUsername }),
 
-  verifyChannel: (data: { channelId?: string; channelUsername?: string }) =>
-    apiClient.post<{ verified: boolean; channel?: RawChannel }>('/api/channel/verify', data),
-
-  upsertChannelProfile: (data: {
-    channelId: string;
-    title?: string;
-    description?: string;
-    photoUrl?: string;
-  }) => apiClient.post<RawChannel>('/api/channel/profile', data),
+  // Добавить и сразу синхронизировать
+  loadChannel: (channelUsername: string) =>
+    apiClient.post<{ channel: RawChannel; postsCount?: number }>('/api/channel/load', { channelUsername }),
 };
