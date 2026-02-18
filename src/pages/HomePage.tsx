@@ -6,7 +6,7 @@ import { useBackButton } from "../hooks/useTelegramWebApp";
 import type { Channel } from "../types/api";
 import StatusText from "../components/ui/StatusText/StatusText";
 import Tag from "../components/ui/Tag/Tag";
-import DebugPanel from "../components/DebugPanel";
+
 const getInitials = (firstName?: string, lastName?: string, username?: string) => {
   const initials = [firstName, lastName]
     .filter(Boolean)
@@ -306,8 +306,6 @@ const HomePage = () => {
           </div>
         )}
       </section>
-
-      <DebugPanel />
     </div>
   );
 };

@@ -4,6 +4,7 @@ interface RequestConfig extends RequestInit {
   params?: Record<string, string | number | boolean>;
 }
 
+// Development mode detection
 const isDevelopment = import.meta.env.DEV;
 
 class ApiClient {
@@ -27,20 +28,13 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
 
-    // Add Telegram WebApp init data - try multiple possible header names
+    // Add Telegram WebApp init data if available
     if (window.Telegram?.WebApp?.initData) {
-      const initData = window.Telegram.WebApp.initData;
-      
-      // Try common variations of the header name
-      headers['X-Telegram-Init-Data'] = initData;
-      headers['Telegram-Init-Data'] = initData;
-      headers['initData'] = initData;
-      headers['Authorization'] = initData; // Some backends use this
-      
+      headers['X-Telegram-Init-Data'] = window.Telegram.WebApp.initData;
       console.log('✅ Telegram init data added to headers');
-      console.log('📝 Init data length:', initData.length);
     } else if (isDevelopment) {
       console.warn('⚠️ Development mode: No Telegram init data - using mock');
+      // In development, you might want to add a mock token or skip auth
     } else {
       console.error('❌ No Telegram init data available');
     }
@@ -67,16 +61,12 @@ class ApiClient {
     console.log(`🌐 API Request: ${config.method || 'GET'} ${url}`);
 
     try {
-      const headers = {
-        ...this.getHeaders(),
-        ...fetchConfig.headers,
-      };
-
-      console.log('📤 Request headers:', Object.keys(headers));
-
       const response = await fetch(url, {
         ...fetchConfig,
-        headers,
+        headers: {
+          ...this.getHeaders(),
+          ...fetchConfig.headers,
+        },
       });
 
       console.log(`📡 API Response: ${response.status} ${response.statusText}`);
@@ -136,10 +126,7 @@ class ApiClient {
     }
 
     if (window.Telegram?.WebApp?.initData) {
-      const initData = window.Telegram.WebApp.initData;
-      headers['X-Telegram-Init-Data'] = initData;
-      headers['Telegram-Init-Data'] = initData;
-      headers['initData'] = initData;
+      headers['X-Telegram-Init-Data'] = window.Telegram.WebApp.initData;
     }
 
     console.log(`🌐 API Request (FormData): POST ${url}`);
