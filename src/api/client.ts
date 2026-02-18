@@ -5,8 +5,6 @@ interface RequestConfig extends RequestInit {
 }
 
 const isDevelopment = import.meta.env.DEV;
-
-// Mock initData for development — replace this string with a real one from @userinfobot or BotFather test
 const DEV_INIT_DATA = import.meta.env.VITE_DEV_INIT_DATA || '';
 
 class ApiClient {
@@ -26,7 +24,6 @@ class ApiClient {
       return window.Telegram.WebApp.initData;
     }
     if (isDevelopment && DEV_INIT_DATA) {
-      console.warn('⚠️ Dev mode: using VITE_DEV_INIT_DATA from .env');
       return DEV_INIT_DATA;
     }
     return '';
@@ -44,8 +41,6 @@ class ApiClient {
     const initData = this.getInitData();
     if (initData) {
       headers['X-Telegram-Init-Data'] = initData;
-    } else if (!isDevelopment) {
-      console.error('❌ No Telegram init data available');
     }
 
     return headers;
@@ -66,8 +61,17 @@ class ApiClient {
     const url = this.buildUrl(endpoint, params);
 
     const initData = this.getInitData();
+
+    console.log('─────────────────────────────────');
+    console.log('📤 REQUEST:', config.method || 'GET', url);
+    console.log('🔑 initData present:', !!initData);
+    console.log('📱 Telegram WebApp:', !!window.Telegram?.WebApp);
+    console.log('🌍 Origin:', window.location.origin);
+
     if (!initData) {
-      throw new Error('Missing initData token');
+      const err = new Error('Missing initData token — открой приложение через Telegram');
+      console.error('❌', err.message);
+      throw err;
     }
 
     try {
@@ -79,22 +83,41 @@ class ApiClient {
         },
       });
 
+      console.log('📥 RESPONSE STATUS:', response.status, response.statusText);
+
       if (!response.ok) {
         const errorText = await response.text();
+        console.error('❌ Error body:', errorText);
+
         let errorMessage = `HTTP ${response.status}`;
         try {
           const errorJson = JSON.parse(errorText);
           errorMessage = errorJson.message || errorJson.error || errorMessage;
         } catch {
-          errorMessage = response.statusText || errorMessage;
+          errorMessage = errorText || response.statusText || errorMessage;
         }
+
         throw new Error(errorMessage);
       }
 
-      return await response.json() as T;
-    } catch (error) {
-      console.error('💥 API request failed:', error);
-      throw error;
+      const data = await response.json() as T;
+      console.log('✅ Response data:', data);
+      return data;
+
+    } catch (error: unknown) {
+      if (error instanceof TypeError) {
+        // TypeError = CORS или сеть
+        console.error('💥 TypeError (CORS / Network):', error.message);
+        console.error('   Причина 1: Бэкенд не разрешает CORS для:', window.location.origin);
+        console.error('   Причина 2: Бэкенд недоступен');
+        console.error('   Причина 3: Нет интернета');
+        throw new Error(`Сетевая ошибка: ${error.message}`);
+      }
+      if (error instanceof Error) {
+        console.error('💥 Request error:', error.message);
+        throw error;
+      }
+      throw new Error('Неизвестная ошибка');
     }
   }
 
@@ -136,25 +159,32 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: formData,
-    });
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorMessage = `HTTP ${response.status}`;
-      try {
-        const errorJson = JSON.parse(errorText);
-        errorMessage = errorJson.message || errorJson.error || errorMessage;
-      } catch {
-        errorMessage = response.statusText || errorMessage;
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.message || errorJson.error || errorMessage;
+        } catch {
+          errorMessage = errorText || response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
-      throw new Error(errorMessage);
-    }
 
-    return await response.json() as T;
+      return await response.json() as T;
+    } catch (error: unknown) {
+      if (error instanceof TypeError) {
+        throw new Error(`Сетевая ошибка (FormData): ${error.message}`);
+      }
+      throw error;
+    }
   }
 }
 
