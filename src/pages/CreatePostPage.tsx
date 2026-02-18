@@ -1,591 +1,549 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
-import { postsApi } from "../api/posts";
+import { postsApi, type CreatePostRequest } from "../api/posts";
 import { channelsApi } from "../api/channels";
-import { useBackButton, useMainButton, useHapticFeedback } from "../hooks/useTelegramWebApp";
+import { useBackButton, useHapticFeedback } from "../hooks/useTelegramWebApp";
 import { useToast } from "../hooks/useToast";
 import type { Channel } from "../types/api";
 
-type MediaType = "image" | "video" | "audio";
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-type MediaFile = {
+type ContentType = "text" | "media" | "album";
+type MediaType = "photo" | "video" | "document" | "audio";
+type PostStatus = "published" | "scheduled";
+
+type AlbumItem = {
   id: string;
   type: MediaType;
-  file: File;
-  preview: string;
+  file: File | null;
+  caption: string;
 };
 
-type Message = {
+type ButtonItem = {
   id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: Date;
+  text: string;
+  url: string;
+  row: string;
 };
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const resolveAccept = (type: MediaType): string => {
+  if (type === "photo") return "image/*";
+  if (type === "video") return "video/*";
+  if (type === "audio") return "audio/*";
+  return "*/*";
+};
+
+const uid = () => Math.random().toString(36).slice(2, 9);
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+const FormatToolbar = ({ onApply }: { onApply: (fmt: string) => void }) => (
+  <div className="flex flex-wrap gap-2">
+    {(["bold", "italic", "underline", "strike", "code", "pre", "link"] as const).map((fmt) => {
+      const label: Record<string, string> = {
+        bold: "B", italic: "I", underline: "U", strike: "S",
+        code: "Code", pre: "Pre", link: "Link",
+      };
+      return (
+        <button
+          key={fmt}
+          type="button"
+          onClick={() => onApply(fmt)}
+          className="rounded-lg border border-slate-700/70 bg-slate-800/60 px-3 py-1 text-xs font-semibold text-slate-200 transition hover:bg-slate-700/70"
+        >
+          {label[fmt]}
+        </button>
+      );
+    })}
+  </div>
+);
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 const CreatePostPage = () => {
-  const { channelId } = useParams();
+  const { channelId } = useParams<{ channelId: string }>();
   const navigate = useNavigate();
   const { showToast } = useToast();
   const haptic = useHapticFeedback();
-  
+
   const [channel, setChannel] = useState<Channel | null>(null);
-  const [content, setContent] = useState("");
-  const [media, setMedia] = useState<MediaFile[]>([]);
-  const [scheduledAt, setScheduledAt] = useState("");
+
+  // form fields
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+  const [disablePreview, setDisablePreview] = useState(false);
+  const [status, setStatus] = useState<PostStatus>("published");
+  const [publishAt, setPublishAt] = useState("");
+  const [contentType, setContentType] = useState<ContentType>("text");
+
+  // single media
+  const [mediaType, setMediaType] = useState<MediaType>("photo");
+  const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [mediaCaption, setMediaCaption] = useState("");
+
+  // album
+  const [albumItems, setAlbumItems] = useState<AlbumItem[]>([{ id: uid(), type: "photo", file: null, caption: "" }]);
+
+  // inline buttons
+  const [buttons, setButtons] = useState<ButtonItem[]>([]);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isAiChatOpen, setIsAiChatOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      role: "assistant",
-      content: "Привет! Я помогу тебе создать крутой пост. Расскажи, о чём хочешь написать?",
-      timestamp: new Date(),
-    },
-  ]);
-  const [inputMessage, setInputMessage] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useBackButton(() => navigate(`/channel/${channelId}`), true);
 
+  // Load channel info
   useEffect(() => {
-    const fetchChannel = async () => {
-      if (!channelId) return;
-      
-      try {
-        const data = await channelsApi.getChannelById(channelId);
-        setChannel(data);
-      } catch (error) {
-        console.error('Failed to fetch channel:', error);
-        showToast('Не удалось загрузить канал', 'error');
-      }
+    if (!channelId) return;
+    channelsApi.getChannelById(channelId)
+      .then(setChannel)
+      .catch(() => {/* non-critical */});
+  }, [channelId]);
+
+  // ── Format helpers ──────────────────────────────────────────────────────────
+
+  const applyFormat = useCallback((kind: string) => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+
+    const tags: Record<string, [string, string]> = {
+      bold:      ["<b>", "</b>"],
+      italic:    ["<i>", "</i>"],
+      underline: ["<u>", "</u>"],
+      strike:    ["<s>", "</s>"],
+      code:      ["<code>", "</code>"],
+      pre:       ["<pre>", "</pre>"],
+      link:      ['<a href="https://">', "</a>"],
     };
+    const [before, after] = tags[kind] ?? ["", ""];
+    const placeholder = kind === "code" ? "code" : kind === "link" ? "ссылка" : "текст";
 
-    fetchChannel();
-  }, [channelId, showToast]);
+    const start = ta.selectionStart ?? 0;
+    const end = ta.selectionEnd ?? 0;
+    const selected = ta.value.slice(start, end) || placeholder;
+    const next = ta.value.slice(0, start) + before + selected + after + ta.value.slice(end);
+    setText(next);
 
-  useEffect(() => {
-    if (chatScrollRef.current) {
-      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-    }
-  }, [messages]);
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-
-    if (media.length + files.length > 10) {
-      showToast('Максимум 10 файлов', 'error');
-      return;
-    }
-
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const preview = event.target?.result as string;
-        let type: MediaType = "image";
-
-        if (file.type.startsWith("video/")) type = "video";
-        else if (file.type.startsWith("audio/")) type = "audio";
-
-        setMedia((prev) => [
-          ...prev,
-          {
-            id: Math.random().toString(36).substr(2, 9),
-            type,
-            file,
-            preview,
-          },
-        ]);
-      };
-      reader.readAsDataURL(file);
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.setSelectionRange(start + before.length, start + before.length + selected.length);
     });
+  }, []);
 
-    haptic.selectionChanged();
+  // ── Album helpers ───────────────────────────────────────────────────────────
+
+  const addAlbumItem = () =>
+    setAlbumItems((prev) => [...prev, { id: uid(), type: "photo", file: null, caption: "" }]);
+
+  const removeAlbumItem = (id: string) =>
+    setAlbumItems((prev) => prev.filter((item) => item.id !== id));
+
+  const updateAlbumItem = (id: string, patch: Partial<AlbumItem>) =>
+    setAlbumItems((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+
+  const validateAlbum = (items: AlbumItem[]): string | null => {
+    const hasAudio = items.some((i) => i.type === "audio");
+    const hasDoc = items.some((i) => i.type === "document");
+    const hasPhVid = items.some((i) => i.type === "photo" || i.type === "video");
+    if ((hasAudio && (hasDoc || hasPhVid)) || (hasDoc && hasPhVid)) {
+      return "Альбом должен содержать только аудио, только документы, или фото/видео.";
+    }
+    return null;
   };
 
-  const handleRemoveMedia = (id: string) => {
-    setMedia((prev) => prev.filter((item) => item.id !== id));
-    haptic.impactOccurred('light');
+  // ── Button helpers ──────────────────────────────────────────────────────────
+
+  const addButton = () =>
+    setButtons((prev) => [...prev, { id: uid(), text: "", url: "", row: "" }]);
+
+  const removeButton = (id: string) =>
+    setButtons((prev) => prev.filter((btn) => btn.id !== id));
+
+  const updateButton = (id: string, patch: Partial<ButtonItem>) =>
+    setButtons((prev) => prev.map((btn) => (btn.id === id ? { ...btn, ...patch } : btn)));
+
+  // ── Reset ───────────────────────────────────────────────────────────────────
+
+  const resetForm = () => {
+    setTitle("");
+    setText("");
+    setDisablePreview(false);
+    setStatus("published");
+    setPublishAt("");
+    setContentType("text");
+    setMediaType("photo");
+    setMediaFile(null);
+    setMediaCaption("");
+    setAlbumItems([{ id: uid(), type: "photo", file: null, caption: "" }]);
+    setButtons([]);
   };
 
-  const handleSendMessage = () => {
-    if (!inputMessage.trim()) return;
+  // ── Submit ──────────────────────────────────────────────────────────────────
 
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: inputMessage,
-      timestamp: new Date(),
-    };
+  const handleSubmit = async () => {
+    if (!channelId) return;
 
-    setMessages((prev) => [...prev, userMessage]);
-    setInputMessage("");
-    setIsTyping(true);
-    haptic.selectionChanged();
+    if (contentType === "text" && !title.trim() && !text.trim()) {
+      showToast("Введите текст или заголовок", "error");
+      return;
+    }
 
-    setTimeout(() => {
-      const aiResponse: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: generateAiResponse(inputMessage),
-        timestamp: new Date(),
+    if (status === "scheduled") {
+      if (!publishAt) {
+        showToast("Укажите время публикации", "error");
+        return;
+      }
+      if (Number.isNaN(new Date(publishAt).getTime())) {
+        showToast("Некорректное время публикации", "error");
+        return;
+      }
+    }
+
+    if (contentType === "media" && !mediaFile) {
+      showToast("Выберите файл для медиа", "error");
+      return;
+    }
+
+    if (contentType === "album") {
+      const filled = albumItems.filter((i) => i.file);
+      if (!filled.length) {
+        showToast("Добавьте хотя бы один элемент альбома", "error");
+        return;
+      }
+      if (filled.length !== albumItems.length) {
+        showToast("Выберите файлы для всех элементов альбома", "error");
+        return;
+      }
+      const err = validateAlbum(filled);
+      if (err) { showToast(err, "error"); return; }
+    }
+
+    setIsSubmitting(true);
+    haptic.impactOccurred("heavy");
+
+    const collectedButtons = buttons
+      .map((btn) => {
+        if (!btn.text.trim() || !btn.url.trim()) return null;
+        const rowNum = parseInt(btn.row, 10);
+        return { text: btn.text.trim(), url: btn.url.trim(), ...(isNaN(rowNum) ? {} : { row: rowNum }) };
+      })
+      .filter((b): b is { text: string; url: string; row?: number } => b !== null);
+
+    try {
+      const payload: CreatePostRequest = {
+        channelId,
+        title: title.trim() || undefined,
+        text: text.trim() || undefined,
+        parseMode: "HTML",
+        disableWebPagePreview: disablePreview || undefined,
+        status,
+        publishAt: status === "scheduled" ? new Date(publishAt).toISOString() : undefined,
+        buttons: collectedButtons.length ? collectedButtons : undefined,
       };
-      setMessages((prev) => [...prev, aiResponse]);
-      setIsTyping(false);
-      haptic.notificationOccurred('success');
-    }, 1500);
-  };
 
-  const generateAiResponse = (_input: string) => {
-    const responses = [
-      "Отличная идея! Попробуй добавить эмодзи для большей вовлеченности 🚀",
-      "Предлагаю начать с интригующего вопроса, чтобы зацепить аудиторию",
-      "Добавь призыв к действию в конце поста - это повысит вовлеченность",
-      "Можешь разбить текст на короткие абзацы для лучшей читаемости",
-      "Отличный заголовок! Теперь добавь немного личного опыта",
-    ];
-    return responses[Math.floor(Math.random() * responses.length)];
-  };
+      if (contentType === "media" && mediaFile) {
+        payload.mediaType = mediaType;
+        payload.mediaFile = mediaFile;
+        payload.mediaCaption = mediaCaption.trim() || undefined;
+      }
 
-  const handleInsertAiText = (text: string) => {
-    setContent((prev) => (prev ? `${prev}\n\n${text}` : text));
-    setIsAiChatOpen(false);
-    haptic.impactOccurred('medium');
-  };
+      if (contentType === "album") {
+        const filled = albumItems.filter((i) => i.file);
+        payload.mediaGroupMeta = filled.map((i) => ({ type: i.type, caption: i.caption || undefined })) as Array<{ type: string; caption?: string }>;
+        payload.mediaFiles = filled.map((i) => i.file!);
+      }
 
-  const handleSaveDraft = async () => {
-    if (!content.trim() && media.length === 0) {
-      showToast('Добавьте текст или медиа', 'error');
-      return;
-    }
-
-    setIsSubmitting(true);
-    haptic.impactOccurred('medium');
-
-    try {
-      await postsApi.createPost({
-        channelId: channelId!,
-        content,
-        media: media.map(m => m.file),
-      });
-
-      haptic.notificationOccurred('success');
-      showToast('Черновик сохранен', 'success');
+      await postsApi.createPost(payload);
+      haptic.notificationOccurred("success");
+      showToast(status === "scheduled" ? "Пост запланирован" : "Пост опубликован", "success");
       navigate(`/channel/${channelId}`);
     } catch (error) {
-      console.error('Failed to save draft:', error);
-      haptic.notificationOccurred('error');
-      showToast('Не удалось сохранить черновик', 'error');
+      haptic.notificationOccurred("error");
+      showToast(error instanceof Error ? error.message : "Не удалось создать пост", "error");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleSchedulePost = async () => {
-    if (!content.trim() && media.length === 0) {
-      showToast('Добавьте текст или медиа', 'error');
-      return;
-    }
-
-    if (!scheduledAt) {
-      showToast('Выберите дату и время публикации', 'error');
-      return;
-    }
-
-    setIsSubmitting(true);
-    haptic.impactOccurred('medium');
-
-    try {
-      await postsApi.createPost({
-        channelId: channelId!,
-        content,
-        media: media.map(m => m.file),
-        scheduledAt,
-      });
-
-      haptic.notificationOccurred('success');
-      showToast('Пост запланирован', 'success');
-      navigate(`/channel/${channelId}`);
-    } catch (error) {
-      console.error('Failed to schedule post:', error);
-      haptic.notificationOccurred('error');
-      showToast('Не удалось запланировать пост', 'error');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handlePublishNow = async () => {
-    if (!content.trim() && media.length === 0) {
-      showToast('Добавьте текст или медиа', 'error');
-      return;
-    }
-
-    setIsSubmitting(true);
-    haptic.impactOccurred('heavy');
-
-    try {
-      await postsApi.manualPost(channelId!, {
-        content,
-        media: media.map(m => m.file),
-      });
-
-      haptic.notificationOccurred('success');
-      showToast('Пост опубликован', 'success');
-      navigate(`/channel/${channelId}`);
-    } catch (error) {
-      console.error('Failed to publish post:', error);
-      haptic.notificationOccurred('error');
-      showToast('Не удалось опубликовать пост', 'error');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  useMainButton('Опубликовать сейчас', handlePublishNow, {
-    show: !isSubmitting && (!!content.trim() || media.length > 0),
-    isActive: !isSubmitting,
-  });
+  // ─────────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-950 text-slate-100">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -left-32 top-20 h-80 w-80 rounded-full bg-blue-700/20 blur-3xl animate-glow-pulse" />
-        <div className="absolute right-[-120px] top-[-80px] h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl" />
-      </div>
+    <div className="space-y-6 pb-16">
+      {/* Header */}
+      <header className="flex items-center gap-4">
+        <Link
+          to={`/channel/${channelId}`}
+          aria-label="Назад"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-800/80 bg-slate-900/60 text-slate-200 transition hover:border-slate-600/80 hover:text-white"
+        >
+          <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
+            <path d="M12.5 4.5 7 10l5.5 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </Link>
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{channel?.title ?? "Канал"}</p>
+          <h1 className="text-2xl font-semibold text-slate-50 sm:text-3xl">Новый пост</h1>
+        </div>
+      </header>
 
-      <div className="relative mx-auto flex min-h-screen max-w-md flex-col px-4 pb-12 pt-6 sm:max-w-xl sm:px-6 sm:pt-8 lg:max-w-3xl">
-        <div className="space-y-6 sm:space-y-8">
-          <header className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Link
-                to={`/channel/${channelId}`}
-                aria-label="Назад"
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-800/80 bg-slate-900/60 text-slate-200 transition hover:border-slate-600/80 hover:text-white"
-              >
-                <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
-                  <path
-                    d="M12.5 4.5 7 10l5.5 5.5"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </Link>
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                  {channel?.title || 'Канал'}
-                </p>
-                <h1 className="text-2xl font-semibold text-slate-50 sm:text-3xl">
-                  Новый пост
-                </h1>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsAiChatOpen(true);
-                haptic.impactOccurred('light');
-              }}
-              className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-xs uppercase tracking-[0.2em] text-blue-100 transition hover:border-blue-500/50 hover:bg-blue-500/20"
-            >
-              <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
-                <path
-                  d="M10 3a7 7 0 0 1 7 7v1a2 2 0 0 1-2 2h-1m-1-3a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                />
-              </svg>
-              AI помощник
-            </button>
-          </header>
-
-          <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.8)] backdrop-blur sm:p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                Медиа
-              </h2>
-              <span className="text-xs text-slate-400">
-                {media.length}/10 файлов
-              </span>
-            </div>
-
+      {/* Title + format mode */}
+      <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.8)] backdrop-blur space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1">
+            <label htmlFor="postTitle" className="text-xs uppercase tracking-[0.2em] text-slate-500">Заголовок</label>
             <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,video/*,audio/*"
-              onChange={handleFileSelect}
-              className="hidden"
+              id="postTitle"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Заголовок поста"
+              className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/30"
             />
-
-            <button
-              type="button"
-              onClick={() => {
-                fileInputRef.current?.click();
-                haptic.impactOccurred('light');
-              }}
-              disabled={media.length >= 10}
-              className="mb-4 flex w-full items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-700/70 bg-slate-950/50 px-4 py-8 text-sm text-slate-300 transition hover:border-slate-600/70 hover:bg-slate-900/70 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <svg viewBox="0 0 20 20" fill="none" className="h-5 w-5">
-                <path
-                  d="M10 4v12m-6-6h12"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                />
-              </svg>
-              Добавить фото, видео или аудио
-            </button>
-
-            {media.length > 0 && (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {media.map((item) => (
-                  <div
-                    key={item.id}
-                    className="group relative aspect-square overflow-hidden rounded-xl border border-slate-800/70 bg-slate-950/60"
-                  >
-                    {item.type === "image" && (
-                      <img
-                        src={item.preview}
-                        alt="Preview"
-                        className="h-full w-full object-cover"
-                      />
-                    )}
-                    {item.type === "video" && (
-                      <video
-                        src={item.preview}
-                        className="h-full w-full object-cover"
-                      />
-                    )}
-                    {item.type === "audio" && (
-                      <div className="flex h-full items-center justify-center bg-gradient-to-br from-purple-500/20 to-pink-500/20">
-                        <svg
-                          viewBox="0 0 20 20"
-                          fill="none"
-                          className="h-8 w-8 text-purple-300"
-                        >
-                          <path
-                            d="M8 14a2 2 0 1 1-4 0 2 2 0 0 1 4 0Zm0 0V6m8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0Zm0 0V4l-8 2"
-                            stroke="currentColor"
-                            strokeWidth="1.6"
-                            strokeLinecap="round"
-                          />
-                        </svg>
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveMedia(item.id)}
-                      className="absolute right-2 top-2 rounded-full bg-red-500/80 p-1.5 opacity-0 transition group-hover:opacity-100"
-                    >
-                      <svg
-                        viewBox="0 0 20 20"
-                        fill="none"
-                        className="h-3 w-3 text-white"
-                      >
-                        <path
-                          d="M5 5l10 10M15 5L5 15"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                    </button>
-                    <div className="absolute bottom-2 left-2 rounded-full bg-slate-900/80 px-2 py-0.5 text-[10px] uppercase tracking-wider text-slate-300">
-                      {item.type}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.8)] backdrop-blur sm:p-6">
-            <label
-              htmlFor="content"
-              className="mb-3 block text-xs uppercase tracking-[0.2em] text-slate-500"
-            >
-              Текст поста
-            </label>
-            <textarea
-              id="content"
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder="Напишите текст вашего поста..."
-              rows={10}
-              className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/30"
-            />
-            <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
-              <span>{content.length} символов</span>
-              <span>Рекомендуем: 100-300 символов</span>
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.8)] backdrop-blur sm:p-6">
-            <label
-              htmlFor="scheduledAt"
-              className="mb-3 block text-xs uppercase tracking-[0.2em] text-slate-500"
-            >
-              Запланировать публикацию (опционально)
-            </label>
-            <input
-              type="datetime-local"
-              id="scheduledAt"
-              value={scheduledAt}
-              onChange={(e) => setScheduledAt(e.target.value)}
-              min={new Date().toISOString().slice(0, 16)}
-              className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/30"
-            />
-          </section>
-
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={handleSaveDraft}
-              disabled={isSubmitting}
-              className="flex-1 rounded-full border border-slate-700/70 bg-slate-950/80 px-5 py-3 text-xs uppercase tracking-[0.2em] text-slate-200 transition hover:border-slate-600/70 hover:text-white disabled:opacity-50"
-            >
-              Сохранить черновик
-            </button>
-            <button
-              type="button"
-              onClick={handleSchedulePost}
-              disabled={isSubmitting || !scheduledAt}
-              className="flex-1 rounded-full border border-blue-500/30 bg-blue-500/10 px-5 py-3 text-xs uppercase tracking-[0.2em] text-blue-100 transition hover:border-blue-500/50 hover:bg-blue-500/20 disabled:opacity-50"
-            >
-              Запланировать
-            </button>
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Формат текста</p>
+            <p className="rounded-2xl border border-slate-800/80 bg-slate-950/40 px-4 py-2.5 text-sm text-slate-400">HTML (по умолчанию)</p>
           </div>
         </div>
-      </div>
 
-      {isAiChatOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center">
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
-            onClick={() => setIsAiChatOpen(false)}
-            aria-label="Закрыть чат"
+        {/* Text + toolbar */}
+        <div className="space-y-2">
+          <label htmlFor="postText" className="text-xs uppercase tracking-[0.2em] text-slate-500">Текст / подпись</label>
+          <FormatToolbar onApply={applyFormat} />
+          <textarea
+            id="postText"
+            ref={textareaRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Текст поста или подпись к медиа"
+            rows={8}
+            className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/30 font-mono"
           />
-          <section
-            className="relative z-10 flex w-full max-w-md flex-col rounded-t-3xl border border-slate-800/70 bg-slate-900/95 shadow-[0_-20px_45px_-30px_rgba(15,23,42,0.9)] backdrop-blur sm:max-w-xl lg:max-w-3xl"
-            style={{ height: "85vh", maxHeight: "85vh" }}
-          >
-            <div className="flex items-center justify-between border-b border-slate-800/60 px-5 py-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20">
-                  <svg viewBox="0 0 20 20" fill="none" className="h-5 w-5 text-blue-300">
-                    <path
-                      d="M10 3a7 7 0 0 1 7 7v1a2 2 0 0 1-2 2h-1m-1-3a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                </div>
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-100">
-                    AI Помощник
-                  </h2>
-                  <p className="text-xs text-slate-400">Помогу создать пост</p>
-                </div>
+          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+            <input type="checkbox" checked={disablePreview} onChange={(e) => setDisablePreview(e.target.checked)} className="accent-blue-500" />
+            Отключить превью ссылок
+          </label>
+          <p className="text-xs text-slate-500">HTML: &lt;b&gt;, &lt;i&gt;, &lt;u&gt;, &lt;s&gt;, &lt;code&gt;, &lt;pre&gt;, &lt;a href=""&gt;</p>
+        </div>
+      </section>
+
+      {/* Status + schedule */}
+      <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.8)] backdrop-blur space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1">
+            <label htmlFor="postStatus" className="text-xs uppercase tracking-[0.2em] text-slate-500">Статус</label>
+            <select
+              id="postStatus"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as PostStatus)}
+              className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-2.5 text-sm text-slate-100 outline-none transition focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/30"
+            >
+              <option value="published">Опубликовать сейчас</option>
+              <option value="scheduled">Запланировать</option>
+            </select>
+          </div>
+          {status === "scheduled" && (
+            <div className="space-y-1">
+              <label htmlFor="publishAt" className="text-xs uppercase tracking-[0.2em] text-slate-500">Время публикации</label>
+              <input
+                id="publishAt"
+                type="datetime-local"
+                value={publishAt}
+                onChange={(e) => setPublishAt(e.target.value)}
+                min={new Date().toISOString().slice(0, 16)}
+                className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-2.5 text-sm text-slate-100 outline-none transition focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/30"
+              />
+              <p className="text-xs text-slate-500">Время берётся с устройства.</p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Content type */}
+      <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.8)] backdrop-blur space-y-4">
+        <div className="space-y-2">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Тип контента</p>
+          <div className="flex flex-wrap gap-4">
+            {(["text", "media", "album"] as const).map((t) => (
+              <label key={t} className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="radio" name="contentType" value={t} checked={contentType === t} onChange={() => setContentType(t)} className="accent-blue-500" />
+                {t === "text" ? "Текст" : t === "media" ? "Медиа" : "Альбом"}
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-slate-500">Если выбрано медиа/альбом, текст выше станет подписью.</p>
+        </div>
+
+        {/* Single media */}
+        {contentType === "media" && (
+          <div className="space-y-3 border-t border-slate-800/60 pt-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate-500">Тип медиа</label>
+                <select
+                  value={mediaType}
+                  onChange={(e) => setMediaType(e.target.value as MediaType)}
+                  className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-2.5 text-sm text-slate-100 outline-none transition focus:border-blue-500/60"
+                >
+                  <option value="photo">Фото</option>
+                  <option value="video">Видео</option>
+                  <option value="document">Документ</option>
+                  <option value="audio">Аудио</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate-500">Файл</label>
+                <input
+                  type="file"
+                  accept={resolveAccept(mediaType)}
+                  onChange={(e) => setMediaFile(e.target.files?.[0] ?? null)}
+                  className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-2 text-sm text-slate-300 file:mr-3 file:rounded-full file:border-0 file:bg-blue-500/20 file:px-3 file:py-1 file:text-xs file:text-blue-200"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs uppercase tracking-[0.2em] text-slate-500">Подпись (caption)</label>
+              <textarea
+                value={mediaCaption}
+                onChange={(e) => setMediaCaption(e.target.value)}
+                placeholder="Если пусто — будет использован текст сверху"
+                rows={3}
+                className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/30"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Album */}
+        {contentType === "album" && (
+          <div className="space-y-3 border-t border-slate-800/60 pt-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-100">Элементы альбома</p>
+                <p className="text-xs text-slate-500">Разрешено: все аудио, все документы, или фото/видео.</p>
               </div>
               <button
                 type="button"
-                onClick={() => setIsAiChatOpen(false)}
-                className="rounded-full p-2 transition hover:bg-slate-800/50"
+                onClick={addAlbumItem}
+                className="rounded-full border border-slate-700/70 bg-slate-800/60 px-3 py-1.5 text-xs text-slate-200 transition hover:bg-slate-700/60"
               >
-                <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4 text-slate-400">
-                  <path
-                    d="M5 5l10 10M15 5L5 15"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                  />
-                </svg>
+                + Добавить
               </button>
             </div>
-
-            <div
-              ref={chatScrollRef}
-              className="flex-1 space-y-4 overflow-y-auto px-5 py-4"
-            >
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                      msg.role === "user"
-                        ? "bg-blue-500/20 text-blue-50"
-                        : "bg-slate-800/60 text-slate-100"
-                    }`}
-                  >
-                    <p className="text-sm">{msg.content}</p>
-                    {msg.role === "assistant" && (
-                      <button
-                        type="button"
-                        onClick={() => handleInsertAiText(msg.content)}
-                        className="mt-2 text-xs text-blue-300 hover:text-blue-200"
-                      >
-                        Вставить в пост →
-                      </button>
-                    )}
+            <div className="space-y-3">
+              {albumItems.map((item, idx) => (
+                <div key={item.id} className="rounded-xl border border-slate-800/70 bg-slate-950/50 p-3 space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-slate-500">#{idx + 1}</span>
+                    <select
+                      value={item.type}
+                      onChange={(e) => updateAlbumItem(item.id, { type: e.target.value as MediaType })}
+                      className="rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-200 outline-none flex-1 min-w-[100px]"
+                    >
+                      <option value="photo">Фото</option>
+                      <option value="video">Видео</option>
+                      <option value="document">Документ</option>
+                      <option value="audio">Аудио</option>
+                    </select>
+                    <input
+                      type="file"
+                      accept={resolveAccept(item.type)}
+                      onChange={(e) => updateAlbumItem(item.id, { file: e.target.files?.[0] ?? null })}
+                      className="flex-1 min-w-[120px] text-xs text-slate-300 file:mr-2 file:rounded-full file:border-0 file:bg-blue-500/20 file:px-2 file:py-1 file:text-xs file:text-blue-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeAlbumItem(item.id)}
+                      className="rounded-full border border-red-400/30 px-2 py-1 text-xs text-red-300 transition hover:border-red-400/60"
+                    >
+                      Удалить
+                    </button>
                   </div>
+                  <textarea
+                    value={item.caption}
+                    onChange={(e) => updateAlbumItem(item.id, { caption: e.target.value })}
+                    placeholder="Подпись для этого элемента"
+                    rows={2}
+                    className="w-full rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 py-2 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500/60"
+                  />
                 </div>
               ))}
-              {isTyping && (
-                <div className="flex justify-start">
-                  <div className="rounded-2xl bg-slate-800/60 px-4 py-3">
-                    <div className="flex gap-1">
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "0ms" }} />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "150ms" }} />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "300ms" }} />
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
+          </div>
+        )}
+      </section>
 
-            <div className="border-t border-slate-800/60 p-4">
-              <div className="flex gap-2">
+      {/* Inline buttons */}
+      <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.8)] backdrop-blur space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-slate-100">Inline кнопки</p>
+            <p className="text-xs text-slate-500">Row позволяет группировать кнопки в строку.</p>
+          </div>
+          <button
+            type="button"
+            onClick={addButton}
+            className="rounded-full border border-slate-700/70 bg-slate-800/60 px-3 py-1.5 text-xs text-slate-200 transition hover:bg-slate-700/60"
+          >
+            + Добавить кнопку
+          </button>
+        </div>
+        {buttons.length > 0 && (
+          <div className="space-y-2">
+            {buttons.map((btn) => (
+              <div key={btn.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-800/70 bg-slate-950/50 p-2">
                 <input
-                  type="text"
-                  value={inputMessage}
-                  onChange={(e) => setInputMessage(e.target.value)}
-                  onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-                  placeholder="Спросите что-нибудь..."
-                  className="flex-1 rounded-full border border-slate-800/80 bg-slate-950/60 px-4 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-blue-500/60"
+                  value={btn.text}
+                  onChange={(e) => updateButton(btn.id, { text: e.target.value })}
+                  placeholder="Текст кнопки"
+                  className="flex-1 min-w-[120px] rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500/60"
+                />
+                <input
+                  value={btn.url}
+                  onChange={(e) => updateButton(btn.id, { url: e.target.value })}
+                  placeholder="https://"
+                  className="flex-1 min-w-[140px] rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500/60"
+                />
+                <input
+                  value={btn.row}
+                  onChange={(e) => updateButton(btn.id, { row: e.target.value })}
+                  placeholder="Row"
+                  className="w-16 rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500/60"
                 />
                 <button
                   type="button"
-                  onClick={handleSendMessage}
-                  disabled={!inputMessage.trim()}
-                  className="rounded-full bg-blue-500/20 px-4 py-2 text-blue-100 transition hover:bg-blue-500/30 disabled:opacity-50"
+                  onClick={() => removeButton(btn.id)}
+                  className="rounded-full border border-red-400/30 px-2 py-1 text-xs text-red-300 hover:border-red-400/60"
                 >
-                  <svg viewBox="0 0 20 20" fill="none" className="h-5 w-5">
-                    <path
-                      d="M3 10h14m-7-7 7 7-7 7"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                  Удалить
                 </button>
               </div>
-            </div>
-          </section>
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Actions */}
+      <div className="flex gap-3">
+        <button
+          type="button"
+          onClick={resetForm}
+          disabled={isSubmitting}
+          className="flex-1 rounded-full border border-slate-700/70 bg-slate-950/80 px-5 py-3 text-xs uppercase tracking-[0.2em] text-slate-400 transition hover:border-slate-600/70 hover:text-slate-200 disabled:opacity-50"
+        >
+          Сбросить
+        </button>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={isSubmitting}
+          className="flex-1 rounded-full border border-blue-500/40 bg-blue-500/15 px-5 py-3 text-xs uppercase tracking-[0.2em] text-blue-100 transition hover:border-blue-500/60 hover:bg-blue-500/25 disabled:opacity-50"
+        >
+          {isSubmitting ? "Отправка..." : status === "scheduled" ? "Запланировать" : "Опубликовать"}
+        </button>
+      </div>
     </div>
   );
 };

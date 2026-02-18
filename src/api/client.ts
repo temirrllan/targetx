@@ -4,8 +4,10 @@ interface RequestConfig extends RequestInit {
   params?: Record<string, string | number | boolean>;
 }
 
-// Development mode detection
 const isDevelopment = import.meta.env.DEV;
+
+// Mock initData for development — replace this string with a real one from @userinfobot or BotFather test
+const DEV_INIT_DATA = import.meta.env.VITE_DEV_INIT_DATA || '';
 
 class ApiClient {
   private baseUrl: string;
@@ -19,6 +21,17 @@ class ApiClient {
     this.token = token;
   }
 
+  private getInitData(): string {
+    if (window.Telegram?.WebApp?.initData) {
+      return window.Telegram.WebApp.initData;
+    }
+    if (isDevelopment && DEV_INIT_DATA) {
+      console.warn('⚠️ Dev mode: using VITE_DEV_INIT_DATA from .env');
+      return DEV_INIT_DATA;
+    }
+    return '';
+  }
+
   private getHeaders(): HeadersInit {
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
@@ -28,14 +41,10 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
 
-    // Add Telegram WebApp init data if available
-    if (window.Telegram?.WebApp?.initData) {
-      headers['X-Telegram-Init-Data'] = window.Telegram.WebApp.initData;
-      console.log('✅ Telegram init data added to headers');
-    } else if (isDevelopment) {
-      console.warn('⚠️ Development mode: No Telegram init data - using mock');
-      // In development, you might want to add a mock token or skip auth
-    } else {
+    const initData = this.getInitData();
+    if (initData) {
+      headers['X-Telegram-Init-Data'] = initData;
+    } else if (!isDevelopment) {
       console.error('❌ No Telegram init data available');
     }
 
@@ -44,13 +53,11 @@ class ApiClient {
 
   private buildUrl(endpoint: string, params?: Record<string, string | number | boolean>): string {
     const url = new URL(`${this.baseUrl}${endpoint}`);
-    
     if (params) {
       Object.entries(params).forEach(([key, value]) => {
         url.searchParams.append(key, String(value));
       });
     }
-
     return url.toString();
   }
 
@@ -58,7 +65,10 @@ class ApiClient {
     const { params, ...fetchConfig } = config;
     const url = this.buildUrl(endpoint, params);
 
-    console.log(`🌐 API Request: ${config.method || 'GET'} ${url}`);
+    const initData = this.getInitData();
+    if (!initData) {
+      throw new Error('Missing initData token');
+    }
 
     try {
       const response = await fetch(url, {
@@ -69,12 +79,8 @@ class ApiClient {
         },
       });
 
-      console.log(`📡 API Response: ${response.status} ${response.statusText}`);
-
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('❌ API Error Response:', errorText);
-        
         let errorMessage = `HTTP ${response.status}`;
         try {
           const errorJson = JSON.parse(errorText);
@@ -82,13 +88,10 @@ class ApiClient {
         } catch {
           errorMessage = response.statusText || errorMessage;
         }
-        
         throw new Error(errorMessage);
       }
 
-      const data = await response.json();
-      console.log('✅ API Response Data:', data);
-      return data;
+      return await response.json() as T;
     } catch (error) {
       console.error('💥 API request failed:', error);
       throw error;
@@ -119,49 +122,39 @@ class ApiClient {
 
   async postFormData<T>(endpoint: string, formData: FormData): Promise<T> {
     const url = this.buildUrl(endpoint);
-    const headers: HeadersInit = {};
+    const initData = this.getInitData();
+
+    if (!initData) {
+      throw new Error('Missing initData token');
+    }
+
+    const headers: HeadersInit = {
+      'X-Telegram-Init-Data': initData,
+    };
 
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
 
-    if (window.Telegram?.WebApp?.initData) {
-      headers['X-Telegram-Init-Data'] = window.Telegram.WebApp.initData;
-    }
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
 
-    console.log(`🌐 API Request (FormData): POST ${url}`);
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: formData,
-      });
-
-      console.log(`📡 API Response: ${response.status} ${response.statusText}`);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ API Error Response:', errorText);
-        
-        let errorMessage = `HTTP ${response.status}`;
-        try {
-          const errorJson = JSON.parse(errorText);
-          errorMessage = errorJson.message || errorJson.error || errorMessage;
-        } catch {
-          errorMessage = response.statusText || errorMessage;
-        }
-        
-        throw new Error(errorMessage);
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorMessage = errorJson.message || errorJson.error || errorMessage;
+      } catch {
+        errorMessage = response.statusText || errorMessage;
       }
-
-      const data = await response.json();
-      console.log('✅ API Response Data:', data);
-      return data;
-    } catch (error) {
-      console.error('💥 API request failed:', error);
-      throw error;
+      throw new Error(errorMessage);
     }
+
+    return await response.json() as T;
   }
 }
 
