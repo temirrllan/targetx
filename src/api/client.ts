@@ -19,7 +19,7 @@ class ApiClient {
     this.token = token;
   }
 
-  private getInitData(): string {
+  getInitData(): string {
     if (window.Telegram?.WebApp?.initData) {
       return window.Telegram.WebApp.initData;
     }
@@ -29,24 +29,25 @@ class ApiClient {
     return '';
   }
 
-  private getHeaders(): HeadersInit {
+  private getHeaders(initData: string): HeadersInit {
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
+      // Пробуем все варианты заголовков
+      'X-Telegram-Init-Data': initData,
+      'Authorization': `tma ${initData}`,
     };
 
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
 
-    const initData = this.getInitData();
-    if (initData) {
-      headers['X-Telegram-Init-Data'] = initData;
-    }
-
     return headers;
   }
 
-  private buildUrl(endpoint: string, params?: Record<string, string | number | boolean>): string {
+  private buildUrl(
+    endpoint: string,
+    params?: Record<string, string | number | boolean>
+  ): string {
     const url = new URL(`${this.baseUrl}${endpoint}`);
     if (params) {
       Object.entries(params).forEach(([key, value]) => {
@@ -59,31 +60,37 @@ class ApiClient {
   async request<T>(endpoint: string, config: RequestConfig = {}): Promise<T> {
     const { params, ...fetchConfig } = config;
     const url = this.buildUrl(endpoint, params);
-
     const initData = this.getInitData();
 
-    console.log('─────────────────────────────────');
-    console.log('📤 REQUEST:', config.method || 'GET', url);
-    console.log('🔑 initData present:', !!initData);
-    console.log('📱 Telegram WebApp:', !!window.Telegram?.WebApp);
-    console.log('🌍 Origin:', window.location.origin);
-
     if (!initData) {
-      const err = new Error('Missing initData token — открой приложение через Telegram');
-      console.error('❌', err.message);
-      throw err;
+      throw new Error('Missing initData token — открой приложение через Telegram');
+    }
+
+    // Если это POST/PUT с JSON телом — добавляем initData в тело тоже
+    let body = fetchConfig.body;
+    const method = (config.method || 'GET').toUpperCase();
+    if (body && typeof body === 'string' && (method === 'POST' || method === 'PUT')) {
+      try {
+        const parsed = JSON.parse(body);
+        // Добавляем initData в тело на случай если бэкенд читает оттуда
+        parsed._initData = initData;
+        body = JSON.stringify(parsed);
+      } catch {
+        // Тело не JSON — оставляем как есть
+      }
     }
 
     try {
       const response = await fetch(url, {
         ...fetchConfig,
+        body,
         headers: {
-          ...this.getHeaders(),
+          ...this.getHeaders(initData),
           ...fetchConfig.headers,
         },
       });
 
-      console.log('📥 RESPONSE STATUS:', response.status, response.statusText);
+      console.log('📥', method, endpoint, '→', response.status);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -96,25 +103,17 @@ class ApiClient {
         } catch {
           errorMessage = errorText || response.statusText || errorMessage;
         }
-
         throw new Error(errorMessage);
       }
 
-      const data = await response.json() as T;
-      console.log('✅ Response data:', data);
-      return data;
+      return await response.json() as T;
 
     } catch (error: unknown) {
       if (error instanceof TypeError) {
-        // TypeError = CORS или сеть
-        console.error('💥 TypeError (CORS / Network):', error.message);
-        console.error('   Причина 1: Бэкенд не разрешает CORS для:', window.location.origin);
-        console.error('   Причина 2: Бэкенд недоступен');
-        console.error('   Причина 3: Нет интернета');
+        console.error('💥 Network/CORS error:', error.message);
         throw new Error(`Сетевая ошибка: ${error.message}`);
       }
       if (error instanceof Error) {
-        console.error('💥 Request error:', error.message);
         throw error;
       }
       throw new Error('Неизвестная ошибка');
@@ -153,11 +152,15 @@ class ApiClient {
 
     const headers: HeadersInit = {
       'X-Telegram-Init-Data': initData,
+      'Authorization': `tma ${initData}`,
     };
 
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
+
+    // Добавляем initData в FormData тоже
+    formData.append('_initData', initData);
 
     try {
       const response = await fetch(url, {
@@ -181,7 +184,7 @@ class ApiClient {
       return await response.json() as T;
     } catch (error: unknown) {
       if (error instanceof TypeError) {
-        throw new Error(`Сетевая ошибка (FormData): ${error.message}`);
+        throw new Error(`Сетевая ошибка: ${error.message}`);
       }
       throw error;
     }
