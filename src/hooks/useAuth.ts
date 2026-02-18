@@ -1,8 +1,32 @@
 import { useEffect, useState } from 'react';
-import { authApi } from '../api/auth';
+import { apiClient } from '../api/client';
 import type { User } from '../types/api';
 
-const isDevelopment = import.meta.env.DEV;
+interface MeResponse {
+  user: {
+    _id: string;
+    tgId: number;
+    firstName?: string;
+    lastName?: string;
+    username?: string;
+    photoUrl?: string;
+    isPremium?: boolean;
+    subscription?: 'not_paid' | 'plus' | 'prem';
+    stats?: unknown;
+  };
+  channels?: unknown[];
+}
+
+const mapUser = (raw: MeResponse['user']): User => ({
+  id: raw._id || String(raw.tgId),
+  firstName: raw.firstName,
+  lastName: raw.lastName,
+  username: raw.username,
+  photoUrl: raw.photoUrl,
+  subscription: raw.subscription ?? 'not_paid',
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+});
 
 export const useAuth = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -15,35 +39,18 @@ export const useAuth = () => {
         setLoading(true);
         setError(null);
 
-        // Check if Telegram WebApp is available
-        if (!window.Telegram?.WebApp?.initData && !isDevelopment) {
-          throw new Error('Приложение должно быть запущено через Telegram');
-        }
+        const res = await apiClient.request<MeResponse>('/api/tgapp/me', { method: 'GET' });
+        const raw = res.user ?? (res as unknown as MeResponse['user']);
+        setUser(mapUser(raw));
 
-        console.log('🔍 Fetching user data...');
-        console.log('📱 Telegram WebApp available:', !!window.Telegram?.WebApp);
-        console.log('🔑 Init data available:', !!window.Telegram?.WebApp?.initData);
-        
-        if (window.Telegram?.WebApp?.initDataUnsafe?.user) {
-          console.log('👤 Telegram user:', window.Telegram.WebApp.initDataUnsafe.user);
-        }
-
-        const userData = await authApi.getCurrentUser();
-        console.log('✅ User data received:', userData);
-        
-        setUser(userData);
       } catch (err) {
         const error = err as Error;
-        console.error('❌ Failed to fetch user:', error);
         setError(error);
-        
-        // Fallback to Telegram user data if API fails but we have Telegram data
-        if (window.Telegram?.WebApp?.initDataUnsafe?.user) {
-          const tgUser = window.Telegram.WebApp.initDataUnsafe.user;
-          console.log('🔄 Using Telegram fallback data:', tgUser);
-          
+
+        const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+        if (tgUser) {
           setUser({
-            id: tgUser.id.toString(),
+            id: String(tgUser.id),
             firstName: tgUser.first_name,
             lastName: tgUser.last_name,
             username: tgUser.username,
@@ -52,7 +59,7 @@ export const useAuth = () => {
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           });
-          setError(null); // Clear error since we have fallback data
+          setError(null);
         }
       } finally {
         setLoading(false);
@@ -65,10 +72,10 @@ export const useAuth = () => {
   const refetch = async () => {
     setLoading(true);
     setError(null);
-    
     try {
-      const userData = await authApi.getCurrentUser();
-      setUser(userData);
+      const res = await apiClient.request<MeResponse>('/api/tgapp/me', { method: 'GET' });
+      const raw = res.user ?? (res as unknown as MeResponse['user']);
+      setUser(mapUser(raw));
     } catch (err) {
       setError(err as Error);
     } finally {

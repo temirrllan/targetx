@@ -9,14 +9,9 @@ const DEV_INIT_DATA = import.meta.env.VITE_DEV_INIT_DATA || '';
 
 class ApiClient {
   private baseUrl: string;
-  private token: string | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
-  }
-
-  setToken(token: string) {
-    this.token = token;
   }
 
   getInitData(): string {
@@ -29,18 +24,14 @@ class ApiClient {
     return '';
   }
 
-  private getHeaders(initData: string): HeadersInit {
+  private getHeaders(): HeadersInit {
+    const initData = this.getInitData();
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
-      // Пробуем все варианты заголовков
-      'X-Telegram-Init-Data': initData,
-      'Authorization': `tma ${initData}`,
     };
-
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
+    if (initData) {
+      headers['Authorization'] = `Bearer ${initData}`;
     }
-
     return headers;
   }
 
@@ -66,36 +57,20 @@ class ApiClient {
       throw new Error('Missing initData token — открой приложение через Telegram');
     }
 
-    // Если это POST/PUT с JSON телом — добавляем initData в тело тоже
-    let body = fetchConfig.body;
-    const method = (config.method || 'GET').toUpperCase();
-    if (body && typeof body === 'string' && (method === 'POST' || method === 'PUT')) {
-      try {
-        const parsed = JSON.parse(body);
-        // Добавляем initData в тело на случай если бэкенд читает оттуда
-        parsed._initData = initData;
-        body = JSON.stringify(parsed);
-      } catch {
-        // Тело не JSON — оставляем как есть
-      }
-    }
-
     try {
       const response = await fetch(url, {
         ...fetchConfig,
-        body,
         headers: {
-          ...this.getHeaders(initData),
+          ...this.getHeaders(),
           ...fetchConfig.headers,
         },
       });
 
-      console.log('📥', method, endpoint, '→', response.status);
+      console.log('📥', config.method || 'GET', endpoint, '→', response.status);
 
       if (!response.ok) {
         const errorText = await response.text();
         console.error('❌ Error body:', errorText);
-
         let errorMessage = `HTTP ${response.status}`;
         try {
           const errorJson = JSON.parse(errorText);
@@ -110,7 +85,7 @@ class ApiClient {
 
     } catch (error: unknown) {
       if (error instanceof TypeError) {
-        console.error('💥 Network/CORS error:', error.message);
+        console.error('💥 Network/CORS:', error.message);
         throw new Error(`Сетевая ошибка: ${error.message}`);
       }
       if (error instanceof Error) {
@@ -150,22 +125,12 @@ class ApiClient {
       throw new Error('Missing initData token');
     }
 
-    const headers: HeadersInit = {
-      'X-Telegram-Init-Data': initData,
-      'Authorization': `tma ${initData}`,
-    };
-
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
-
-    // Добавляем initData в FormData тоже
-    formData.append('_initData', initData);
-
     try {
       const response = await fetch(url, {
         method: 'POST',
-        headers,
+        headers: {
+          'Authorization': `Bearer ${initData}`,
+        },
         body: formData,
       });
 
