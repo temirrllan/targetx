@@ -3,7 +3,6 @@ import { Link, useParams } from "react-router-dom";
 import ApexLineChart from "../components/ui/Charts/ApexLineChart";
 import BottomSheet from "../components/ui/BottomSheet/BottomSheet";
 import ElasticList from "../components/ui/ElasticList/ElasticList";
-import { channelsApi } from "../api/channels";
 import { apiClient } from "../api/client";
 import type { Channel } from "../types/api";
 
