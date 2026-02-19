@@ -172,55 +172,55 @@ const ChannelDetailsPage = () => {
 
   // ── Основной рендер ────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6 sm:space-y-8">
-      {/* Header */}
-      <header className="flex items-center gap-3 flex-wrap">
+    <div className="space-y-4 sm:space-y-6">
+      {/* Блок 1: Информация о канале */}
+      <header className="flex items-center gap-3">
         <Link to="/" className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-800/80 bg-slate-900/60 text-slate-200 transition hover:border-slate-600/80 hover:text-white">
           <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
             <path d="M12.5 4.5 7 10l5.5 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </Link>
 
-        <div className="flex items-center gap-3 flex-1 min-w-0">
-          {channel.photoUrl ? (
-            <img src={channel.photoUrl} alt={channel.title} className="h-12 w-12 rounded-2xl object-cover shrink-0" />
-          ) : (
-            <div className="h-12 w-12 shrink-0 rounded-2xl bg-gradient-to-br from-cyan-500/80 to-blue-600/80" />
-          )}
-          <div className="min-w-0">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Канал</p>
-            <h1 className="text-xl font-semibold text-slate-50 truncate sm:text-2xl">{channel.title}</h1>
-            <p className="text-xs text-slate-400">
-              {channel.subscribers.toLocaleString("ru-RU")} подписчиков
-              {channel.username && <span className="ml-2 text-slate-500">@{channel.username}</span>}
-            </p>
-          </div>
-        </div>
+        {channel.photoUrl ? (
+          <img src={channel.photoUrl} alt={channel.title} className="h-12 w-12 rounded-2xl object-cover shrink-0" />
+        ) : (
+          <div className="h-12 w-12 shrink-0 rounded-2xl bg-gradient-to-br from-cyan-500/80 to-blue-600/80" />
+        )}
 
-        <div className="flex items-center gap-2 ml-auto">
-          <button
-            type="button"
-            onClick={handleSync}
-            disabled={syncing}
-            className="inline-flex items-center gap-1.5 rounded-full border border-slate-700/70 bg-slate-800/60 px-3 py-2 text-xs text-slate-300 transition hover:bg-slate-700/60 disabled:opacity-50"
-          >
-            <svg viewBox="0 0 20 20" fill="none" className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`}>
-              <path d="M4 10a6 6 0 0 1 10.5-4M16 10a6 6 0 0 1-10.5 4M16 6v4h-4M4 14v-4h4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            {syncing ? "Синхр..." : "Синхр."}
-          </button>
-
-          <Link
-            to={`/channel/${channelId}/create-post`}
-            className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs uppercase tracking-[0.2em] text-blue-100 transition hover:border-blue-500/50 hover:bg-blue-500/20"
-          >
-            <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
-              <path d="M10 4v12m-6-6h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
-            Создать
-          </Link>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Канал</p>
+          <h1 className="text-xl font-semibold text-slate-50 truncate sm:text-2xl">{channel.title}</h1>
+          <p className="text-sm text-slate-400">
+            {channel.subscribers.toLocaleString("ru-RU")} подписчиков
+            {channel.username && <span className="ml-2 text-slate-500">@{channel.username}</span>}
+          </p>
         </div>
       </header>
+
+      {/* Блок 2: Кнопки действий */}
+      <div className="flex gap-3">
+        <button
+          type="button"
+          onClick={handleSync}
+          disabled={syncing}
+          className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-slate-700/70 bg-slate-800/60 px-4 py-2.5 text-xs uppercase tracking-[0.2em] text-slate-300 transition hover:bg-slate-700/60 disabled:opacity-50"
+        >
+          <svg viewBox="0 0 20 20" fill="none" className={`h-3.5 w-3.5 shrink-0 ${syncing ? "animate-spin" : ""}`}>
+            <path d="M4 10a6 6 0 0 1 10.5-4M16 10a6 6 0 0 1-10.5 4M16 6v4h-4M4 14v-4h4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {syncing ? "Синхронизация..." : "Синхронизировать"}
+        </button>
+
+        <Link
+          to={`/channel/${channelId}/create-post`}
+          className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-4 py-2.5 text-xs uppercase tracking-[0.2em] text-blue-100 transition hover:border-blue-500/50 hover:bg-blue-500/20"
+        >
+          <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5 shrink-0">
+            <path d="M10 4v12m-6-6h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+          Создать пост
+        </Link>
+      </div>
 
       {/* Кнопки открытия шторок */}
       <section className="space-y-3">
