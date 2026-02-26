@@ -1,3 +1,5 @@
+import { API_BASE_URL } from '../api/ApiSett';
+
 export const debugInitData = async () => {
   const initData = window.Telegram?.WebApp?.initData;
   if (!initData) {
@@ -6,7 +8,7 @@ export const debugInitData = async () => {
   }
 
   console.log('🔑 initData length:', initData.length);
-  const BASE = 'https://targetx-back.farmhub.pro';
+  const BASE = API_BASE_URL;
 
   const tests = [
     ['X-Telegram-Init-Data header', () => fetch(`${BASE}/api/tgapp/me`, {

@@ -69,9 +69,8 @@ export interface Subscription {
 
 export interface ChannelStats {
   channelId: string;
-  period: 'day' | 'week' | 'month';
+  period: 'day' | 'week' | 'month' | 'year';
   views: number[];
   subscribers: number[];
-  engagement: number[];
   labels: string[];
 }

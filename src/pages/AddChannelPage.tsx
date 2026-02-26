@@ -3,12 +3,15 @@ import { Link, useNavigate } from "react-router-dom";
 import { channelsApi, mapChannel } from "../api/channels";
 import { useHapticFeedback } from "../hooks/useTelegramWebApp";
 import type { Channel } from "../types/api";
+import { useAppStore } from "../store/appStore";
 
 type Step = "input" | "preview" | "success";
 
 const AddChannelPage = () => {
   const navigate = useNavigate();
   const haptic = useHapticFeedback();
+  const upsertChannelSnapshot = useAppStore((state) => state.upsertChannelSnapshot);
+  const fetchChannels = useAppStore((state) => state.fetchChannels);
 
   const [query, setQuery] = useState("");
   const [step, setStep] = useState<Step>("input");
@@ -54,6 +57,8 @@ const AddChannelPage = () => {
       const channel = mapChannel(res.channel);
       setPreviewChannel(channel);
       setPostsCount(res.postsCount ?? null);
+      upsertChannelSnapshot(channel);
+      void fetchChannels({ force: true, background: true });
       setStep("success");
       haptic.notificationOccurred("success");
     } catch (err) {

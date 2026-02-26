@@ -1,49 +1,34 @@
-import { useEffect, useState } from 'react';
-import type { TelegramWebApp } from '../types/telegram';
+import { useEffect, useMemo, useRef } from 'react';
+import { useTelegram } from './useTelegram';
 
-export const useTelegramWebApp = () => {
-  const [webApp, setWebApp] = useState<TelegramWebApp | null>(null);
-  const [isReady, setIsReady] = useState(false);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
-      const tg = window.Telegram.WebApp;
-      setWebApp(tg);
-      
-      tg.ready();
-      tg.expand();
-      
-      // Set theme colors
-      tg.headerColor = '#020617'; // slate-950
-      tg.backgroundColor = '#020617';
-      
-      setIsReady(true);
-    }
-  }, []);
-
-  return { webApp, isReady };
-};
+export const useTelegramWebApp = () => useTelegram();
 
 export const useBackButton = (onClick: () => void, show = true) => {
-  const { webApp } = useTelegramWebApp();
+  const { webApp } = useTelegram();
+  const onClickRef = useRef(onClick);
+
+  useEffect(() => {
+    onClickRef.current = onClick;
+  }, [onClick]);
 
   useEffect(() => {
     if (!webApp) return;
 
     const backButton = webApp.BackButton;
-    
+    const handler = () => onClickRef.current();
+
     if (show) {
       backButton.show();
-      backButton.onClick(onClick);
+      backButton.onClick(handler);
     } else {
       backButton.hide();
     }
 
     return () => {
-      backButton.offClick(onClick);
+      backButton.offClick(handler);
       backButton.hide();
     };
-  }, [webApp, onClick, show]);
+  }, [webApp, show]);
 };
 
 export const useMainButton = (
@@ -56,49 +41,63 @@ export const useMainButton = (
     isActive?: boolean;
   }
 ) => {
-  const { webApp } = useTelegramWebApp();
+  const { webApp } = useTelegram();
+  const onClickRef = useRef(onClick);
+  const show = options?.show !== false;
+  const color = options?.color;
+  const textColor = options?.textColor;
+  const isActive = options?.isActive !== false;
+
+  useEffect(() => {
+    onClickRef.current = onClick;
+  }, [onClick]);
 
   useEffect(() => {
     if (!webApp) return;
 
     const mainButton = webApp.MainButton;
-    
+    const handler = () => onClickRef.current();
+
     mainButton.setText(text);
-    mainButton.onClick(onClick);
-    
-    if (options) {
-      mainButton.setParams({
-        text,
-        color: options.color,
-        text_color: options.textColor,
-        is_active: options.isActive !== false,
-        is_visible: options.show !== false,
-      });
-    }
-    
-    if (options?.show !== false) {
+    mainButton.onClick(handler);
+    mainButton.setParams({
+      text,
+      color,
+      text_color: textColor,
+      is_active: isActive,
+      is_visible: show,
+    });
+
+    if (show) {
       mainButton.show();
+    } else {
+      mainButton.hide();
     }
 
     return () => {
-      mainButton.offClick(onClick);
+      mainButton.offClick(handler);
       mainButton.hide();
     };
-  }, [webApp, text, onClick, options]);
+  }, [webApp, text, show, color, textColor, isActive]);
 };
 
 export const useHapticFeedback = () => {
-  const { webApp } = useTelegramWebApp();
+  const { webApp } = useTelegram();
 
-  return {
-    impactOccurred: (style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft' = 'medium') => {
-      webApp?.HapticFeedback.impactOccurred(style);
-    },
-    notificationOccurred: (type: 'error' | 'success' | 'warning') => {
-      webApp?.HapticFeedback.notificationOccurred(type);
-    },
-    selectionChanged: () => {
-      webApp?.HapticFeedback.selectionChanged();
-    },
-  };
+  return useMemo(
+    () => ({
+      impactOccurred: (
+        style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft' = 'medium'
+      ) => {
+        webApp?.HapticFeedback.impactOccurred(style);
+      },
+      notificationOccurred: (type: 'error' | 'success' | 'warning') => {
+        webApp?.HapticFeedback.notificationOccurred(type);
+      },
+      selectionChanged: () => {
+        webApp?.HapticFeedback.selectionChanged();
+      },
+    }),
+    [webApp]
+  );
 };

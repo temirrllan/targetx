@@ -1,28 +1,32 @@
-import { createContext, useContext, type ReactNode } from 'react';
-import { useTelegramWebApp } from '../hooks/useTelegramWebApp';
-import type { TelegramWebApp } from '../types/telegram';
-
-interface TelegramContextType {
-  webApp: TelegramWebApp | null;
-  isReady: boolean;
-}
-
-const TelegramContext = createContext<TelegramContextType | undefined>(undefined);
+import { useEffect, useMemo, type ReactNode } from 'react';
+import { TelegramContext } from './telegramContextStore';
 
 export const TelegramProvider = ({ children }: { children: ReactNode }) => {
-  const { webApp, isReady } = useTelegramWebApp();
+  const webApp = useMemo(
+    () => (typeof window === 'undefined' ? null : window.Telegram?.WebApp ?? null),
+    []
+  );
+  const isReady = webApp !== null;
+
+  useEffect(() => {
+    if (!webApp) {
+      return;
+    }
+
+    webApp.ready();
+    webApp.expand();
+    webApp.headerColor = '#020617';
+    webApp.backgroundColor = '#020617';
+  }, [webApp]);
+
+  const value = useMemo(
+    () => ({ webApp, isReady }),
+    [webApp, isReady]
+  );
 
   return (
-    <TelegramContext.Provider value={{ webApp, isReady }}>
+    <TelegramContext.Provider value={value}>
       {children}
     </TelegramContext.Provider>
   );
-};
-
-export const useTelegram = () => {
-  const context = useContext(TelegramContext);
-  if (context === undefined) {
-    throw new Error('useTelegram must be used within TelegramProvider');
-  }
-  return context;
 };

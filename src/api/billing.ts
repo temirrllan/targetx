@@ -1,14 +1,27 @@
-import { apiClient } from './client';
+import { fetchData } from './ApiSett';
 import type { Subscription } from '../types/api';
 
 export const billingApi = {
-  getSubscriptions: () => apiClient.get<Subscription[]>('/api/billing/subscriptions'),
-  
+  getSubscriptions: () =>
+    fetchData<Subscription[]>({
+      method: 'GET',
+      url: '/api/billing/subscriptions',
+    }),
+
   initiateSubscription: (data: {
     plan: 'plus' | 'prem';
     userId: string;
-  }) => apiClient.post<{ paymentUrl: string }>('/api/billing/subscriptions/initiate', data),
-  
-  subscriptionCallback: (id: string, data: unknown) => 
-    apiClient.post<{ success: boolean }>(`/api/billing/subscriptions/${id}/callback`, data),
+  }) =>
+    fetchData<{ paymentUrl: string }>({
+      method: 'POST',
+      url: '/api/billing/subscriptions/initiate',
+      body: data,
+    }),
+
+  subscriptionCallback: (id: string, data: Record<string, unknown>) =>
+    fetchData<{ success: boolean }>({
+      method: 'POST',
+      url: `/api/billing/subscriptions/${id}/callback`,
+      body: data,
+    }),
 };

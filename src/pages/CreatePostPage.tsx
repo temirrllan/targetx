@@ -1,10 +1,10 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
-import { apiClient } from "../api/client";
-import { channelsApi } from "../api/channels";
+import { postsApi } from "../api/posts";
 import { useBackButton, useHapticFeedback } from "../hooks/useTelegramWebApp";
 import { useToast } from "../hooks/useToast";
 import type { Channel } from "../types/api";
+import { useAppStore } from "../store/appStore";
 
 type ContentType = "text" | "media" | "album";
 type MediaType = "photo" | "video" | "document" | "audio";
@@ -61,8 +61,11 @@ const CreatePostPage = () => {
   const navigate = useNavigate();
   const { showToast } = useToast();
   const haptic = useHapticFeedback();
-
-  const [channel, setChannel] = useState<Channel | null>(null);
+  const channels = useAppStore((state) => state.channels);
+  const channelCache = useAppStore((state) =>
+    channelId ? state.channelCache[channelId] : undefined
+  );
+  const fetchChannelDetails = useAppStore((state) => state.fetchChannelDetails);
 
   // Поля формы
   const [title, setTitle] = useState("");
@@ -88,12 +91,23 @@ const CreatePostPage = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useBackButton(() => navigate(`/channel/${channelId}`), true);
+  const handleBack = useCallback(() => {
+    navigate(`/channel/${channelId}`);
+  }, [navigate, channelId]);
+
+  useBackButton(handleBack, true);
+
+  const fallbackChannel = useMemo(() => {
+    if (!channelId) return null;
+    return channels.find((item) => item.id === channelId) ?? null;
+  }, [channelId, channels]);
+
+  const channel = (channelCache?.details ?? fallbackChannel) as Channel | null;
 
   useEffect(() => {
     if (!channelId) return;
-    channelsApi.getChannelById(channelId).then(setChannel).catch(() => {});
-  }, [channelId]);
+    void fetchChannelDetails(channelId, { background: true });
+  }, [channelId, fetchChannelDetails]);
 
   // ── HTML форматирование ──────────────────────────────────────────────────
   const applyFormat = useCallback((kind: string) => {
@@ -187,50 +201,39 @@ const CreatePostPage = () => {
       });
 
     try {
-      const isMultipart = contentType === "media" || contentType === "album";
+      const payload = {
+        channelId,
+        title: title.trim() || undefined,
+        text: text.trim() || undefined,
+        parseMode: "HTML" as const,
+        status,
+        disableWebPagePreview: disablePreview || undefined,
+        publishAt:
+          status === "scheduled" && publishAt
+            ? new Date(publishAt).toISOString()
+            : undefined,
+        buttons: collectedButtons.length ? collectedButtons : undefined,
+      };
 
-      if (isMultipart) {
-        const form = new FormData();
-        if (title.trim()) form.append("title", title.trim());
-        if (text.trim()) form.append("text", text.trim());
-        form.append("parseMode", "HTML");
-        if (disablePreview) form.append("disableWebPagePreview", "true");
-        form.append("status", status);
-        if (status === "scheduled" && publishAt) {
-          form.append("publishAt", new Date(publishAt).toISOString());
-        }
-        if (collectedButtons.length) {
-          form.append("buttons", JSON.stringify(collectedButtons));
-        }
-
-        if (contentType === "media" && mediaFile) {
-          form.append("mediaType", mediaType);
-          if (mediaCaption.trim()) form.append("mediaCaption", mediaCaption.trim());
-          form.append("mediaFile", mediaFile);
-        }
-
-        if (contentType === "album") {
-          const filled = albumItems.filter((i) => i.file);
-          const meta = filled.map((i) => ({ type: i.type, caption: i.caption || "" }));
-          form.append("mediaGroupMeta", JSON.stringify(meta));
-          filled.forEach((i) => form.append("mediaFiles", i.file!));
-        }
-
-        await apiClient.postFormData(`/api/tgapp/channels/${channelId}/posts`, form);
+      if (contentType === "media" && mediaFile) {
+        await postsApi.createPost({
+          ...payload,
+          mediaType,
+          mediaCaption: mediaCaption.trim() || undefined,
+          mediaFile,
+        });
+      } else if (contentType === "album") {
+        const filled = albumItems.filter((i) => i.file);
+        await postsApi.createPost({
+          ...payload,
+          mediaFiles: filled.map((i) => i.file!).filter(Boolean),
+          mediaGroupMeta: filled.map((i) => ({
+            type: i.type,
+            caption: i.caption || "",
+          })),
+        });
       } else {
-        const payload: Record<string, unknown> = {
-          title: title.trim() || undefined,
-          text: text.trim() || undefined,
-          parseMode: "HTML",
-          status,
-        };
-        if (disablePreview) payload.disableWebPagePreview = true;
-        if (status === "scheduled" && publishAt) {
-          payload.publishAt = new Date(publishAt).toISOString();
-        }
-        if (collectedButtons.length) payload.buttons = collectedButtons;
-
-        await apiClient.post(`/api/tgapp/channels/${channelId}/posts`, payload);
+        await postsApi.createPost(payload);
       }
 
       haptic.notificationOccurred("success");
@@ -275,12 +278,12 @@ const CreatePostPage = () => {
               className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/30"
             />
           </div>
-          <div className="space-y-1">
+          {/* <div className="space-y-1">
             <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Формат текста</p>
             <div className="flex items-center rounded-2xl border border-slate-800/80 bg-slate-950/40 px-4 py-2.5">
               <span className="text-sm text-slate-400">HTML (по умолчанию)</span>
             </div>
-          </div>
+          </div> */}
         </div>
 
         <div className="space-y-2">
@@ -383,16 +386,6 @@ const CreatePostPage = () => {
                 )}
               </div>
             </div>
-            <div className="space-y-1">
-              <label className="text-xs uppercase tracking-[0.2em] text-slate-500">Подпись (caption)</label>
-              <textarea
-                value={mediaCaption}
-                onChange={(e) => setMediaCaption(e.target.value)}
-                placeholder="Если пусто — используется текст сверху"
-                rows={3}
-                className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-blue-500/60"
-              />
-            </div>
           </div>
         )}
 
@@ -444,13 +437,6 @@ const CreatePostPage = () => {
                     )}
                   </div>
                   {item.file && <p className="text-xs text-emerald-400 pl-7 truncate">✓ {item.file.name}</p>}
-                  <textarea
-                    value={item.caption}
-                    onChange={(e) => updateAlbumItem(item.id, { caption: e.target.value })}
-                    placeholder="Подпись для этого элемента"
-                    rows={2}
-                    className="w-full rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 py-2 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500/60"
-                  />
                 </div>
               ))}
             </div>

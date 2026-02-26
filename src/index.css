@@ -9,6 +9,14 @@
     color-scheme: dark;
   }
 
+  html,
+  body,
+  #root {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
   body {
     @apply bg-slate-950 text-slate-100 font-display antialiased;
     min-height: 100dvh;
