@@ -24,6 +24,94 @@ type ButtonItem = {
   row: string;
 };
 
+// ── Validation ───────────────────────────────────────────────────────────────
+
+type ValidationErrors = {
+  text?: string;
+  publishAt?: string;
+  mediaFile?: string;
+  album?: string;
+  buttons?: Record<string, { text?: string; url?: string }>;
+};
+
+const URL_RE = /^https?:\/\/.+\..+/i;
+
+const validate = (
+  text: string,
+  status: PostStatus,
+  publishAt: string,
+  contentType: ContentType,
+  mediaFile: File | null,
+  albumItems: AlbumItem[],
+  buttons: ButtonItem[]
+): ValidationErrors => {
+  const errors: ValidationErrors = {};
+
+  // Текст обязателен всегда
+  if (!text.trim()) {
+    errors.text = "Текст поста обязателен";
+  }
+
+  // Время публикации при запланированном посте
+  if (status === "scheduled") {
+    if (!publishAt) {
+      errors.publishAt = "Укажите время публикации";
+    } else if (new Date(publishAt).getTime() <= Date.now()) {
+      errors.publishAt = "Время должно быть в будущем";
+    }
+  }
+
+  // Одиночное медиа
+  if (contentType === "media") {
+    if (!mediaFile) {
+      errors.mediaFile = "Выберите файл";
+    }
+  }
+
+  // Альбом
+  if (contentType === "album") {
+    const hasEmpty = albumItems.some((i) => !i.file);
+    const allEmpty = albumItems.every((i) => !i.file);
+
+    if (allEmpty) {
+      errors.album = "Добавьте хотя бы один файл в альбом";
+    } else if (hasEmpty) {
+      errors.album = "Выберите файлы для всех элементов альбома";
+    } else {
+      const hasAudio = albumItems.some((i) => i.type === "audio");
+      const hasDoc = albumItems.some((i) => i.type === "document");
+      const hasPhVid = albumItems.some((i) => i.type === "photo" || i.type === "video");
+      if ((hasAudio && (hasDoc || hasPhVid)) || (hasDoc && hasPhVid)) {
+        errors.album =
+          "Альбом должен содержать только аудио, только документы, или фото/видео";
+      }
+    }
+  }
+
+  // Кнопки — если добавлены, оба поля обязательны + URL валиден
+  if (buttons.length > 0) {
+    const btnErrors: Record<string, { text?: string; url?: string }> = {};
+    buttons.forEach((btn) => {
+      const e: { text?: string; url?: string } = {};
+      if (!btn.text.trim()) e.text = "Введите текст кнопки";
+      if (!btn.url.trim()) {
+        e.url = "Введите URL";
+      } else if (!URL_RE.test(btn.url.trim())) {
+        e.url = "Введите корректный URL (https://...)";
+      }
+      if (Object.keys(e).length) btnErrors[btn.id] = e;
+    });
+    if (Object.keys(btnErrors).length) errors.buttons = btnErrors;
+  }
+
+  return errors;
+};
+
+const hasErrors = (errors: ValidationErrors) =>
+  Object.keys(errors).length > 0;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
 const uid = () => Math.random().toString(36).slice(2, 9);
 
 const resolveAccept = (type: MediaType): string => {
@@ -32,6 +120,13 @@ const resolveAccept = (type: MediaType): string => {
   if (type === "audio") return "audio/*";
   return "*/*";
 };
+
+// ── Sub-components ───────────────────────────────────────────────────────────
+
+const FieldError = ({ message }: { message?: string }) =>
+  message ? (
+    <p className="mt-1 text-xs text-red-400">{message}</p>
+  ) : null;
 
 const FormatToolbar = ({ onApply }: { onApply: (fmt: string) => void }) => (
   <div className="flex flex-wrap gap-1.5">
@@ -55,6 +150,8 @@ const FormatToolbar = ({ onApply }: { onApply: (fmt: string) => void }) => (
     ))}
   </div>
 );
+
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 const CreatePostPage = () => {
   const { channelId } = useParams<{ channelId: string }>();
@@ -88,6 +185,10 @@ const CreatePostPage = () => {
   // Inline кнопки
   const [buttons, setButtons] = useState<ButtonItem[]>([]);
 
+  // Валидация
+  const [errors, setErrors] = useState<ValidationErrors>({});
+  const [submitted, setSubmitted] = useState(false);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -108,6 +209,12 @@ const CreatePostPage = () => {
     if (!channelId) return;
     void fetchChannelDetails(channelId, { background: true });
   }, [channelId, fetchChannelDetails]);
+
+  // Пересчитываем ошибки в реальном времени после первой попытки отправки
+  useEffect(() => {
+    if (!submitted) return;
+    setErrors(validate(text, status, publishAt, contentType, mediaFile, albumItems, buttons));
+  }, [submitted, text, status, publishAt, contentType, mediaFile, albumItems, buttons]);
 
   // ── HTML форматирование ──────────────────────────────────────────────────
   const applyFormat = useCallback((kind: string) => {
@@ -142,15 +249,6 @@ const CreatePostPage = () => {
   const updateAlbumItem = (id: string, patch: Partial<AlbumItem>) =>
     setAlbumItems((p) => p.map((i) => (i.id === id ? { ...i, ...patch } : i)));
 
-  const validateAlbum = (items: AlbumItem[]) => {
-    const hasAudio = items.some((i) => i.type === "audio");
-    const hasDoc = items.some((i) => i.type === "document");
-    const hasPhVid = items.some((i) => i.type === "photo" || i.type === "video");
-    if ((hasAudio && (hasDoc || hasPhVid)) || (hasDoc && hasPhVid))
-      return "Альбом должен содержать только аудио, только документы, или фото/видео.";
-    return null;
-  };
-
   // ── Кнопки ──────────────────────────────────────────────────────────────
   const addButton = () =>
     setButtons((p) => [...p, { id: uid(), text: "", url: "", row: "" }]);
@@ -167,27 +265,22 @@ const CreatePostPage = () => {
     setMediaFile(null); setMediaCaption("");
     setAlbumItems([{ id: uid(), type: "photo", file: null, caption: "" }]);
     setButtons([]);
+    setErrors({});
+    setSubmitted(false);
   };
 
   // ── Отправка ─────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!channelId) return;
 
-    if (contentType === "text" && !title.trim() && !text.trim()) {
-      showToast("Введите текст или заголовок", "error"); return;
-    }
-    if (status === "scheduled" && !publishAt) {
-      showToast("Укажите время публикации", "error"); return;
-    }
-    if (contentType === "media" && !mediaFile) {
-      showToast("Выберите файл для медиа", "error"); return;
-    }
-    if (contentType === "album") {
-      const filled = albumItems.filter((i) => i.file);
-      if (!filled.length) { showToast("Добавьте хотя бы один элемент альбома", "error"); return; }
-      if (filled.length !== albumItems.length) { showToast("Выберите файлы для всех элементов", "error"); return; }
-      const err = validateAlbum(filled);
-      if (err) { showToast(err, "error"); return; }
+    setSubmitted(true);
+    const nextErrors = validate(text, status, publishAt, contentType, mediaFile, albumItems, buttons);
+    setErrors(nextErrors);
+
+    if (hasErrors(nextErrors)) {
+      haptic.notificationOccurred("error");
+      showToast("Заполните все обязательные поля", "error");
+      return;
     }
 
     setIsSubmitting(true);
@@ -247,6 +340,21 @@ const CreatePostPage = () => {
     }
   };
 
+  // ── Helpers для классов полей ────────────────────────────────────────────
+  const fieldCls = (hasError: boolean) =>
+    `w-full rounded-2xl border bg-slate-950/60 px-4 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:ring-2 ${
+      hasError
+        ? "border-red-500/60 focus:border-red-500/80 focus:ring-red-500/20"
+        : "border-slate-800/80 focus:border-blue-500/60 focus:ring-blue-500/30"
+    }`;
+
+  const textareaCls = (hasError: boolean) =>
+    `w-full rounded-2xl border bg-slate-950/60 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:ring-2 ${
+      hasError
+        ? "border-red-500/60 focus:border-red-500/80 focus:ring-red-500/20"
+        : "border-slate-800/80 focus:border-blue-500/60 focus:ring-blue-500/30"
+    }`;
+
   return (
     <div className="space-y-5 pb-16">
       {/* Header */}
@@ -267,28 +375,25 @@ const CreatePostPage = () => {
 
       {/* Заголовок + текст */}
       <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 backdrop-blur space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1">
-            <label htmlFor="post-title" className="text-xs uppercase tracking-[0.2em] text-slate-500">Заголовок</label>
-            <input
-              id="post-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Заголовок поста"
-              className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/30"
-            />
-          </div>
-          {/* <div className="space-y-1">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Формат текста</p>
-            <div className="flex items-center rounded-2xl border border-slate-800/80 bg-slate-950/40 px-4 py-2.5">
-              <span className="text-sm text-slate-400">HTML (по умолчанию)</span>
-            </div>
-          </div> */}
+        {/* Заголовок (опциональный) */}
+        <div className="space-y-1">
+          <label htmlFor="post-title" className="text-xs uppercase tracking-[0.2em] text-slate-500">
+            Заголовок <span className="text-slate-600 normal-case tracking-normal">(необязательно)</span>
+          </label>
+          <input
+            id="post-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Заголовок поста"
+            className={fieldCls(false)}
+          />
         </div>
 
+        {/* Текст */}
         <div className="space-y-2">
-          <label htmlFor="post-text" className="text-xs uppercase tracking-[0.2em] text-slate-500">Текст / подпись</label>
-          <FormatToolbar onApply={applyFormat} />
+          <label htmlFor="post-text" className="text-xs uppercase tracking-[0.2em] text-slate-500">
+            Текст / подпись <span className="text-red-400">*</span>
+          </label>
           <textarea
             id="post-text"
             ref={textareaRef}
@@ -296,8 +401,10 @@ const CreatePostPage = () => {
             onChange={(e) => setText(e.target.value)}
             placeholder="Текст поста или подпись к медиа..."
             rows={7}
-            className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/30"
+            className={textareaCls(!!errors.text)}
           />
+          <FieldError message={errors.text} />
+          <FormatToolbar onApply={applyFormat} />
           <div className="flex items-center justify-between">
             <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-400">
               <input type="checkbox" checked={disablePreview} onChange={(e) => setDisablePreview(e.target.checked)} className="accent-blue-500" />
@@ -313,28 +420,34 @@ const CreatePostPage = () => {
       <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 backdrop-blur space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1">
-            <label htmlFor="post-status" className="text-xs uppercase tracking-[0.2em] text-slate-500">Статус</label>
+            <label htmlFor="post-status" className="text-xs uppercase tracking-[0.2em] text-slate-500">
+              Статус <span className="text-red-400">*</span>
+            </label>
             <select
               id="post-status"
               value={status}
               onChange={(e) => setStatus(e.target.value as PostStatus)}
-              className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-2.5 text-sm text-slate-100 outline-none transition focus:border-blue-500/60"
+              className={fieldCls(false)}
             >
               <option value="published">Опубликовать сейчас</option>
               <option value="scheduled">Запланировать</option>
             </select>
           </div>
+
           {status === "scheduled" && (
             <div className="space-y-1">
-              <label htmlFor="publish-at" className="text-xs uppercase tracking-[0.2em] text-slate-500">Время публикации</label>
+              <label htmlFor="publish-at" className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                Время публикации <span className="text-red-400">*</span>
+              </label>
               <input
                 id="publish-at"
                 type="datetime-local"
                 value={publishAt}
                 onChange={(e) => setPublishAt(e.target.value)}
                 min={new Date().toISOString().slice(0, 16)}
-                className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-2.5 text-sm text-slate-100 outline-none transition focus:border-blue-500/60"
+                className={fieldCls(!!errors.publishAt)}
               />
+              <FieldError message={errors.publishAt} />
               <p className="text-xs text-slate-600">Время берётся с устройства.</p>
             </div>
           )}
@@ -348,7 +461,14 @@ const CreatePostPage = () => {
           <div className="flex gap-4">
             {(["text", "media", "album"] as const).map((t) => (
               <label key={t} className="flex cursor-pointer items-center gap-2 text-sm text-slate-300">
-                <input type="radio" name="contentType" value={t} checked={contentType === t} onChange={() => setContentType(t)} className="accent-blue-500" />
+                <input
+                  type="radio"
+                  name="contentType"
+                  value={t}
+                  checked={contentType === t}
+                  onChange={() => { setContentType(t); setMediaFile(null); }}
+                  className="accent-blue-500"
+                />
                 {t === "text" ? "Текст" : t === "media" ? "Медиа" : "Альбом"}
               </label>
             ))}
@@ -361,11 +481,13 @@ const CreatePostPage = () => {
           <div className="space-y-3 border-t border-slate-800/60 pt-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
-                <label className="text-xs uppercase tracking-[0.2em] text-slate-500">Тип медиа</label>
+                <label className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  Тип медиа <span className="text-red-400">*</span>
+                </label>
                 <select
                   value={mediaType}
                   onChange={(e) => { setMediaType(e.target.value as MediaType); setMediaFile(null); }}
-                  className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-2.5 text-sm text-slate-100 outline-none focus:border-blue-500/60"
+                  className={fieldCls(false)}
                 >
                   <option value="photo">Фото</option>
                   <option value="video">Видео</option>
@@ -373,18 +495,40 @@ const CreatePostPage = () => {
                   <option value="audio">Аудио</option>
                 </select>
               </div>
+
               <div className="space-y-1">
-                <label className="text-xs uppercase tracking-[0.2em] text-slate-500">Файл</label>
+                <label className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  Файл <span className="text-red-400">*</span>
+                </label>
                 <input
                   type="file"
                   accept={resolveAccept(mediaType)}
                   onChange={(e) => setMediaFile(e.target.files?.[0] ?? null)}
-                  className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/60 px-3 py-2 text-xs text-slate-300 file:mr-3 file:rounded-full file:border-0 file:bg-blue-500/20 file:px-3 file:py-1 file:text-xs file:text-blue-200"
+                  className={`w-full rounded-2xl border px-3 py-2 text-xs text-slate-300 file:mr-3 file:rounded-full file:border-0 file:bg-blue-500/20 file:px-3 file:py-1 file:text-xs file:text-blue-200 ${
+                    errors.mediaFile
+                      ? "border-red-500/60 bg-red-500/5"
+                      : "border-slate-800/80 bg-slate-950/60"
+                  }`}
                 />
-                {mediaFile && (
+                {mediaFile ? (
                   <p className="text-xs text-emerald-400 truncate">✓ {mediaFile.name}</p>
+                ) : (
+                  <FieldError message={errors.mediaFile} />
                 )}
               </div>
+            </div>
+
+            {/* Подпись к медиа (опциональная) */}
+            <div className="space-y-1">
+              <label className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                Подпись к медиа <span className="text-slate-600 normal-case tracking-normal">(необязательно)</span>
+              </label>
+              <input
+                value={mediaCaption}
+                onChange={(e) => setMediaCaption(e.target.value)}
+                placeholder="Подпись..."
+                className={fieldCls(false)}
+              />
             </div>
           </div>
         )}
@@ -394,7 +538,9 @@ const CreatePostPage = () => {
           <div className="space-y-3 border-t border-slate-800/60 pt-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-semibold text-slate-100">Элементы альбома</p>
+                <p className="text-sm font-semibold text-slate-100">
+                  Элементы альбома <span className="text-red-400">*</span>
+                </p>
                 <p className="text-xs text-slate-500">Только аудио, только документы, или фото/видео.</p>
               </div>
               <button
@@ -405,9 +551,23 @@ const CreatePostPage = () => {
                 + Добавить
               </button>
             </div>
+
+            {errors.album && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-xs text-red-300">
+                {errors.album}
+              </div>
+            )}
+
             <div className="space-y-2">
               {albumItems.map((item, idx) => (
-                <div key={item.id} className="rounded-xl border border-slate-800/70 bg-slate-950/50 p-3 space-y-2">
+                <div
+                  key={item.id}
+                  className={`rounded-xl border p-3 space-y-2 ${
+                    errors.album && !item.file
+                      ? "border-red-500/40 bg-red-500/5"
+                      : "border-slate-800/70 bg-slate-950/50"
+                  }`}
+                >
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs text-slate-600 w-5 text-center">#{idx + 1}</span>
                     <select
@@ -459,40 +619,70 @@ const CreatePostPage = () => {
             + Добавить
           </button>
         </div>
+
         {buttons.length > 0 && (
           <div className="space-y-2">
-            {buttons.map((btn) => (
-              <div key={btn.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-800/70 bg-slate-950/50 p-2">
-                <input
-                  value={btn.text}
-                  onChange={(e) => updateButton(btn.id, { text: e.target.value })}
-                  placeholder="Текст кнопки"
-                  className="flex-1 min-w-[100px] rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500/60"
-                />
-                <input
-                  value={btn.url}
-                  onChange={(e) => updateButton(btn.id, { url: e.target.value })}
-                  placeholder="https://"
-                  className="flex-1 min-w-[130px] rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500/60"
-                />
-                <input
-                  value={btn.row}
-                  onChange={(e) => updateButton(btn.id, { row: e.target.value })}
-                  placeholder="Row"
-                  className="w-14 rounded-xl border border-slate-700/70 bg-slate-900/60 px-2 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500/60"
-                />
-                <button
-                  type="button"
-                  onClick={() => removeButton(btn.id)}
-                  className="rounded-full border border-red-400/30 px-2 py-1 text-xs text-red-300 hover:border-red-400/60"
+            {buttons.map((btn) => {
+              const btnErr = errors.buttons?.[btn.id];
+              return (
+                <div
+                  key={btn.id}
+                  className={`rounded-xl border p-2 space-y-1.5 ${
+                    btnErr ? "border-red-500/40 bg-red-500/5" : "border-slate-800/70 bg-slate-950/50"
+                  }`}
                 >
-                  ✕
-                </button>
-              </div>
-            ))}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-1 min-w-[100px] flex-col gap-1">
+                      <input
+                        value={btn.text}
+                        onChange={(e) => updateButton(btn.id, { text: e.target.value })}
+                        placeholder="Текст кнопки *"
+                        className={`rounded-xl border px-3 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500/60 bg-slate-900/60 ${
+                          btnErr?.text ? "border-red-500/60" : "border-slate-700/70"
+                        }`}
+                      />
+                      {btnErr?.text && <p className="text-[10px] text-red-400">{btnErr.text}</p>}
+                    </div>
+
+                    <div className="flex flex-1 min-w-[130px] flex-col gap-1">
+                      <input
+                        value={btn.url}
+                        onChange={(e) => updateButton(btn.id, { url: e.target.value })}
+                        placeholder="https:// *"
+                        className={`rounded-xl border px-3 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500/60 bg-slate-900/60 ${
+                          btnErr?.url ? "border-red-500/60" : "border-slate-700/70"
+                        }`}
+                      />
+                      {btnErr?.url && <p className="text-[10px] text-red-400">{btnErr.url}</p>}
+                    </div>
+
+                    <input
+                      value={btn.row}
+                      onChange={(e) => updateButton(btn.id, { row: e.target.value })}
+                      placeholder="Row"
+                      className="w-14 rounded-xl border border-slate-700/70 bg-slate-900/60 px-2 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500/60"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeButton(btn.id)}
+                      className="rounded-full border border-red-400/30 px-2 py-1 text-xs text-red-300 hover:border-red-400/60"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
+
+      {/* Суммарная ошибка */}
+      {submitted && hasErrors(errors) && (
+        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm text-red-300">
+          Пожалуйста, исправьте ошибки перед публикацией.
+        </div>
+      )}
 
       {/* Кнопки действий */}
       <div className="flex gap-3">
